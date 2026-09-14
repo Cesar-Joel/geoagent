@@ -1,0 +1,478 @@
+{
+  "project": "geoagent",
+  "description": "Sistema distribuido de software agents en Python que ejecutan jobs de procesamiento geoespacial (Dynamic World / Sentinel-2 de Google Earth Engine) en endpoints remotos, coordinados por un backend central vía REST y message queue, con persistencia local, self-healing, logging estructurado y agregación posterior en Apache Spark.",
+  "rules": {
+    "one_feature_at_a_time": true,
+    "require_tests_to_close": true,
+    "require_approved_spec_to_implement": true,
+    "valid_status": ["pending", "spec_ready", "in_progress", "done", "blocked"],
+    "sdd_required_when": "feature has \"sdd\": true"
+  },
+  "features": [
+    {
+      "id": 1,
+      "name": "project_scaffold",
+      "title": "Estructura base del proyecto y workflow de desarrollo",
+      "description": "Define el esqueleto del repositorio, la separación de paquetes (common, agent, backend, spark, tools), el tooling de calidad y las convenciones de trabajo con Git que se usarán durante todo el proyecto.",
+      "acceptance": [
+        "Existe el layout `src/geoagent/{common,agent,backend,spark}/` y `tests/{unit,integration}/`, cada paquete con su `__init__.py`",
+        "`pyproject.toml` declara el paquete instalable, las dependencias y los entry points `geoagent-agent` y `geoagent-backend`",
+        "`make lint`, `make test` y `make format` ejecutan linter, pytest y formateador sin errores sobre el repo vacío",
+        "Existe `CONTRIBUTING.md` que documenta: convención de ramas (`feat/<id>-<name>`), formato de commits y la regla de una feature por PR",
+        "Existe un pipeline de CI que ejecuta lint y tests en cada push y falla si alguno falla",
+        "`pytest` corre en verde con al menos un test de humo en `tests/unit/test_smoke.py`"
+      ],
+      "sdd": false,
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "core_domain_models",
+      "title": "Modelos de dominio compartidos",
+      "description": "Modelos de datos inmutables y versionados que comparten agente y backend: Job, JobSpec, JobResult, AgentInfo, Heartbeat y sus enums de estado, con serialización/deserialización estable para REST y para la message queue.",
+      "acceptance": [
+        "Existe `src/geoagent/common/models.py` con los modelos `AgentInfo`, `Job`, `JobSpec`, `JobProgress`, `JobResult` y `Heartbeat`",
+        "Existe el enum `JobStatus` con los valores `queued`, `assigned`, `running`, `succeeded`, `failed`, `cancelled` y una función `can_transition(from, to)` que rechaza transiciones inválidas",
+        "Todo modelo expone `to_dict()`/`from_dict()` y un campo `schema_version`; `from_dict()` rechaza payloads con versión desconocida lanzando una excepción tipada",
+        "Los timestamps se serializan en ISO 8601 UTC con sufijo `Z`",
+        "La validación de campos obligatorios falla con un error de dominio propio (`ValidationError`), no con `KeyError`/`TypeError`",
+        "`tests/unit/test_models.py` cubre: round-trip serialización, rechazo de versión desconocida, transiciones válidas e inválidas de `JobStatus` y validación de campos faltantes"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "config_system",
+      "title": "Sistema de configuración por capas",
+      "description": "Carga de configuración para agente y backend desde valores por defecto, archivo TOML/YAML y variables de entorno, con validación temprana y sin secretos en disco en claro.",
+      "acceptance": [
+        "Existe `src/geoagent/common/config.py` con `load_agent_config()` y `load_backend_config()`",
+        "La precedencia es: variables de entorno > archivo de configuración > valores por defecto, y está cubierta por tests",
+        "Toda variable de entorno usa el prefijo `GEOAGENT_` y el mapeo está documentado en `docs/config.md`",
+        "Una configuración inválida (puerto no numérico, URL de backend vacía, `max_workers` <= 0) aborta el arranque con exit code != 0 y un mensaje que nombra la clave ofensora",
+        "Los campos marcados como secretos (token, credenciales de queue) no aparecen en el `repr()` del objeto de configuración ni en los logs",
+        "`tests/unit/test_config.py` cubre precedencia, validación fallida y enmascarado de secretos"
+      ],
+      "sdd": false,
+      "status": "pending"
+    },
+    {
+      "id": 4,
+      "name": "agent_local_store",
+      "title": "Persistencia local del agente",
+      "description": "Almacén local en el endpoint (SQLite) donde el agente guarda su identidad, los jobs aceptados, su estado de ejecución y los resultados pendientes de envío, de forma que sobreviva a un reinicio del proceso o de la máquina.",
+      "acceptance": [
+        "Existe `src/geoagent/agent/store.py` con una clase `LocalStore` que crea el esquema en el primer arranque si no existe",
+        "Persiste al menos: identidad del agente, jobs con su estado, checkpoints de progreso y cola de resultados pendientes de envío",
+        "Las escrituras son transaccionales: un fallo a mitad de una operación no deja registros parciales",
+        "Existe versionado de esquema y una migración aplicada automáticamente al abrir una base de datos de versión anterior",
+        "`LocalStore` es seguro para uso concurrente desde varios hilos del agente (acceso serializado o conexión por hilo)",
+        "`tests/unit/test_local_store.py` cubre: creación en frío, persistencia entre instancias, rollback ante error simulado, migración de esquema y acceso concurrente"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 5,
+      "name": "backend_api_skeleton",
+      "title": "Esqueleto del backend REST",
+      "description": "Servicio HTTP central que expone la API del sistema: arranque, health checks, manejo uniforme de errores, correlación de peticiones y persistencia del backend.",
+      "acceptance": [
+        "Existe `src/geoagent/backend/app.py` que levanta el servicio HTTP y `GET /health` devuelve 200 con versión y uptime",
+        "Todo error se serializa con el mismo contrato `{\"error\": {\"code\": ..., \"message\": ..., \"request_id\": ...}}` y el código HTTP adecuado (400/404/409/422/500)",
+        "Un middleware asigna o propaga `X-Request-Id` en cada petición y lo incluye en la respuesta",
+        "El backend persiste su estado en una base de datos con esquema versionado, creada automáticamente al arrancar",
+        "La API está documentada en un esquema OpenAPI accesible en `/openapi.json`",
+        "`tests/unit/test_backend_api.py` cubre: health, formato de error, propagación de `X-Request-Id` y ruta inexistente devolviendo 404 con el contrato de error"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 6,
+      "name": "agent_registration",
+      "title": "Registro de agents y Agent Manager",
+      "description": "Alta de agentes en el backend: el agente se registra con sus capacidades, recibe identidad y credencial, y el Agent Manager mantiene el inventario del fleet y su estado de conexión.",
+      "acceptance": [
+        "`POST /v1/agents/register` acepta hostname, versión, plataforma y capacidades, y devuelve `agent_id` y token de autenticación",
+        "Un re-registro con la misma identidad persistida devuelve el mismo `agent_id` en lugar de duplicar el agente",
+        "`GET /v1/agents` lista los agentes con su estado (`online`, `stale`, `offline`) y `GET /v1/agents/{id}` devuelve el detalle; un id inexistente devuelve 404",
+        "Todo endpoint distinto de registro y health exige el token del agente y responde 401 sin él",
+        "El agente persiste su identidad en el `LocalStore` y la reutiliza tras reiniciarse, sin volver a darse de alta",
+        "`tests/unit/test_registration.py` cubre: alta nueva, re-registro idempotente, acceso sin token y consulta de agente inexistente"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 7,
+      "name": "agent_http_client",
+      "title": "Cliente REST del agente",
+      "description": "Capa de comunicación HTTP del agente hacia el backend: pool de conexiones, timeouts explícitos, autenticación automática, reintentos de transporte y clasificación de errores de red frente a errores de aplicación.",
+      "acceptance": [
+        "Existe `src/geoagent/agent/client.py` con una clase `BackendClient` que encapsula todas las llamadas al backend",
+        "Toda petición aplica timeout de conexión y de lectura configurables; no existe ninguna llamada sin timeout",
+        "El cliente reutiliza una sesión con connection pooling e inyecta el token de autenticación y el `X-Request-Id` en cada petición",
+        "Los errores se traducen a excepciones tipadas: `TransientBackendError` (timeout, error de conexión, 5xx, 429) frente a `PermanentBackendError` (4xx distinto de 429)",
+        "Ante un backend inalcanzable, el cliente no bloquea el proceso indefinidamente ni propaga excepciones crudas de la librería HTTP",
+        "`tests/unit/test_backend_client.py` cubre, con un servidor HTTP simulado: éxito, timeout, 500, 429, 400 y presencia de cabeceras obligatorias"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 8,
+      "name": "job_manager",
+      "title": "Job Manager y ciclo de vida de los jobs",
+      "description": "Componente del backend que crea jobs a partir de un JobSpec, los persiste, controla su máquina de estados y expone la API para crearlos, consultarlos y cancelarlos.",
+      "acceptance": [
+        "`POST /v1/jobs` crea un job a partir de un `JobSpec` (dataset, región, rango temporal, operación) y devuelve 201 con el `job_id` y estado `queued`",
+        "`GET /v1/jobs/{id}` devuelve estado, agente asignado, progreso e historial de transiciones; `GET /v1/jobs?status=` permite filtrar",
+        "`POST /v1/jobs/{id}/cancel` mueve un job `queued` o `running` a `cancelled` y devuelve 409 si el job ya terminó",
+        "Toda transición de estado se persiste con timestamp y actor, y una transición inválida devuelve 409 sin modificar el job",
+        "Un `JobSpec` inválido (región mal formada, rango temporal invertido, operación desconocida) devuelve 422 con el campo ofensor",
+        "`tests/unit/test_job_manager.py` cubre: creación, consulta, filtrado, cancelación en cada estado, transición inválida y spec inválido"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 9,
+      "name": "message_queue_layer",
+      "title": "Capa de message queue para distribución de trabajo",
+      "description": "Transporte asíncrono entre backend y agentes: el backend publica jobs en la cola y los agentes los consumen con acknowledgement explícito, visibilidad temporal, reentrega ante fallo y dead letter queue.",
+      "acceptance": [
+        "Existe `src/geoagent/common/queue.py` con una interfaz `JobQueue` (`publish`, `consume`, `ack`, `nack`) y al menos una implementación real sobre un broker y otra en memoria para tests",
+        "Un mensaje consumido y no confirmado dentro del tiempo de visibilidad se reentrega a otro consumidor",
+        "Un mensaje reentregado más de `max_deliveries` veces se mueve a una dead letter queue consultable, sin bloquear la cola principal",
+        "El consumo soporta varios agentes simultáneos y un mismo mensaje no se entrega a dos consumidores a la vez mientras esté en vuelo",
+        "La reconexión al broker es automática tras una caída, sin perder mensajes ya confirmados ni duplicar los confirmados",
+        "`tests/unit/test_queue.py` y `tests/integration/test_queue_broker.py` cubren: publish/consume/ack, reentrega por nack, corte de visibilidad, envío a DLQ y reconexión"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 10,
+      "name": "agent_heartbeat",
+      "title": "Heartbeat y detección de agents caídos",
+      "description": "Latido periódico del agente hacia el backend con su estado y carga actual, y detección en el backend de agentes que dejan de reportar para marcarlos y liberar su trabajo.",
+      "acceptance": [
+        "El agente envía `POST /v1/agents/{id}/heartbeat` cada `heartbeat_interval` segundos con estado, jobs en ejecución y uso de recursos",
+        "El heartbeat se ejecuta en su propio hilo/tarea y sigue enviándose mientras el agente procesa jobs, sin verse bloqueado por ellos",
+        "El backend marca un agente como `stale` tras `miss_threshold` latidos perdidos y como `offline` al superar el umbral de expulsión",
+        "Al declarar un agente `offline`, sus jobs `assigned` o `running` vuelven a `queued` y se republican en la cola",
+        "Fallos de red en el heartbeat no matan al agente: se registran y se reintenta en el siguiente ciclo",
+        "`tests/unit/test_heartbeat.py` cubre: envío periódico con reloj simulado, tolerancia a fallo de red, marcado `stale`/`offline` y reasignación de jobs huérfanos"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 11,
+      "name": "agent_concurrency_runtime",
+      "title": "Runtime concurrente del agente",
+      "description": "Modelo de concurrencia del agente: bucle principal que coordina consumo de cola, heartbeat, envío de resultados y un pool de workers para ejecutar jobs en paralelo, con arranque y parada ordenados.",
+      "acceptance": [
+        "Existe `src/geoagent/agent/runtime.py` con un supervisor que arranca y supervisa las tareas de consumo, heartbeat, reporte y el pool de ejecución",
+        "El número máximo de jobs concurrentes es configurable y se respeta: nunca hay más de `max_workers` jobs en `running` en el mismo agente",
+        "`SIGTERM`/`SIGINT` producen un apagado ordenado: se deja de consumir, se permite terminar o hacer checkpoint de los jobs en curso dentro de un timeout y se cierran conexiones y el store",
+        "Si una tarea de fondo muere por una excepción no controlada, el supervisor la registra y la reinicia sin tumbar el resto del agente",
+        "El estado compartido entre tareas está protegido y no existen condiciones de carrera al actualizar el `LocalStore` desde varios workers",
+        "`tests/unit/test_runtime.py` cubre: límite de concurrencia, apagado ordenado dentro del timeout, reinicio de tarea caída y ejecución concurrente de varios jobs"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 12,
+      "name": "job_execution_engine",
+      "title": "Motor de ejecución de jobs",
+      "description": "Componente del agente que toma un job de la cola, lo registra localmente, lo ejecuta a través del handler correspondiente a su operación, emite progreso y produce un JobResult o un fallo clasificado.",
+      "acceptance": [
+        "Existe un registro de handlers por tipo de operación y un job con operación desconocida falla como error permanente sin reintentos",
+        "Cada ejecución escribe su estado y checkpoints en el `LocalStore` antes de reportar al backend",
+        "Un job que supera su `timeout` se cancela, se marca `failed` con causa `timeout` y libera sus recursos y ficheros temporales",
+        "Una excepción del handler se captura, se clasifica como transitoria o permanente y nunca tumba el worker ni el agente",
+        "El motor emite eventos de progreso (`0-100`) al menos al inicio, en cada partición procesada y al final",
+        "`tests/unit/test_execution_engine.py` cubre: ejecución exitosa, operación desconocida, timeout, excepción del handler y emisión de progreso"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 13,
+      "name": "geo_dataset_adapter",
+      "title": "Adaptador del dataset geoespacial",
+      "description": "Capa de acceso a datos de Google Earth Engine (Dynamic World / Sentinel-2) con una interfaz única y dos backends: cliente real de Earth Engine y un backend local determinista que permite ejecutar y testear el sistema sin credenciales ni red.",
+      "acceptance": [
+        "Existe `src/geoagent/common/geodata.py` con la interfaz `GeoDataSource` (`fetch_partition(region, time_range, dataset)`) y las implementaciones `EarthEngineSource` y `LocalFixtureSource`",
+        "El backend a usar se elige por configuración y el sistema arranca en modo local sin credenciales de Earth Engine",
+        "`LocalFixtureSource` genera datos deterministas y reproducibles a partir de una semilla, con el mismo esquema que la fuente real",
+        "Los errores de la fuente se traducen a `TransientGeoDataError` (cuota, timeout, 5xx) y `PermanentGeoDataError` (región inválida, dataset inexistente)",
+        "Las peticiones a Earth Engine aplican timeout y límite de tamaño de respuesta, y el resultado crudo se cachea en disco para no re-descargar la misma partición",
+        "`tests/unit/test_geodata.py` cubre: esquema idéntico entre backends, determinismo del backend local, clasificación de errores y uso de la caché"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 14,
+      "name": "geo_job_operations",
+      "title": "Operaciones geoespaciales y particionado del dataset",
+      "description": "Implementa las operaciones de negocio que ejecutan los agentes sobre Dynamic World/Sentinel-2 y la estrategia de partición que permite repartir un dataset grande entre varios agentes.",
+      "acceptance": [
+        "Existe un particionador que, dado un bounding box y un rango temporal, produce una lista determinista de particiones (celda geográfica x ventana temporal) con identificador estable",
+        "Están implementadas al menos las operaciones `landcover_histogram` (distribución de clases Dynamic World por partición) y `ndvi_summary` (estadísticos agregados por partición)",
+        "El resultado de cada operación incluye el `partition_id`, el conteo de píxeles/observaciones y las métricas calculadas, con esquema documentado en `docs/results_schema.md`",
+        "Particionar dos veces la misma petición produce exactamente los mismos `partition_id`, de modo que el trabajo es repartible y repetible entre agentes",
+        "Una región sin datos disponibles produce un resultado vacío válido, no un fallo",
+        "`tests/unit/test_geo_operations.py` cubre: determinismo del particionado, cálculo correcto de cada operación sobre fixtures conocidos y partición sin datos"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 15,
+      "name": "result_reporting",
+      "title": "Reporte de progreso y resultados al backend",
+      "description": "Canal de vuelta desde el agente: envío de progreso durante la ejecución y entrega de resultados finales al backend, con almacenamiento en un formato apto para ser consumido después por Apache Spark.",
+      "acceptance": [
+        "`POST /v1/jobs/{id}/progress` acepta porcentaje y mensaje y actualiza el job; progreso de un job ya terminado devuelve 409",
+        "`POST /v1/jobs/{id}/result` acepta el `JobResult`, marca el job como `succeeded` o `failed` y persiste el payload",
+        "Los resultados se escriben en el almacén del backend particionados por fecha y job, en formato columnar o NDJSON legible por Spark, con el esquema de `docs/results_schema.md`",
+        "Si el envío del resultado falla, el resultado queda en la cola local del agente y se reenvía en un ciclo posterior sin perderse tras un reinicio",
+        "`GET /v1/jobs/{id}/result` devuelve el resultado almacenado y 404 si el job aún no terminó",
+        "`tests/unit/test_reporting.py` cubre: progreso, resultado exitoso, resultado fallido, reporte sobre job terminado y reenvío pendiente tras reinicio del agente"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 16,
+      "name": "retry_policies",
+      "title": "Reintentos con backoff y clasificación de errores",
+      "description": "Política de reintentos transversal aplicada a llamadas REST, operaciones de cola, acceso al dataset y ejecución de jobs, con backoff exponencial, jitter, límites y distinción entre fallos transitorios y permanentes.",
+      "acceptance": [
+        "Existe `src/geoagent/common/retry.py` con una política reutilizable configurable en intentos máximos, backoff base, factor, tope y jitter",
+        "Solo se reintentan errores clasificados como transitorios; los permanentes fallan de inmediato",
+        "El backoff crece exponencialmente hasta el tope configurado y aplica jitter, verificado con reloj y aleatoriedad simulados",
+        "Un job agotados sus reintentos se marca `failed` con causa `retries_exhausted` y el historial de intentos queda persistido",
+        "La política respeta la cabecera `Retry-After` cuando el backend la devuelve en un 429",
+        "`tests/unit/test_retry.py` cubre: éxito tras N fallos transitorios, no reintento ante permanente, progresión del backoff, agotamiento de intentos y `Retry-After`"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 17,
+      "name": "idempotency",
+      "title": "Idempotencia y deduplicación de ejecuciones",
+      "description": "Garantiza que la reentrega de mensajes o el reintento de peticiones no produzca ejecuciones ni resultados duplicados, mediante claves de idempotencia en la API y deduplicación en el agente.",
+      "acceptance": [
+        "Todo mensaje de job lleva una clave de idempotencia estable derivada del `job_id` y el intento",
+        "Si un agente recibe un job cuya clave ya está registrada como terminada en su `LocalStore`, no lo reejecuta: confirma el mensaje y reenvía el resultado previo",
+        "`POST /v1/jobs` y `POST /v1/jobs/{id}/result` aceptan la cabecera `Idempotency-Key`; una repetición con la misma clave devuelve la respuesta original sin crear ni sobrescribir nada",
+        "Dos agentes que reciben el mismo job por una reentrega producen un único resultado almacenado en el backend",
+        "El registro de claves de idempotencia tiene política de expiración documentada y no crece sin límite",
+        "`tests/unit/test_idempotency.py` y `tests/integration/test_duplicate_delivery.py` cubren: reentrega del mismo mensaje, repetición de POST con la misma clave, carrera entre dos agentes y expiración de claves"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 18,
+      "name": "agent_recovery_self_healing",
+      "title": "Recovery y self-healing del agent",
+      "description": "Capacidad del agente para sobrevivir a crashes, cortes de red y caídas del backend o del broker: reanudar trabajo desde el estado local, reconectarse solo y volver a un estado consistente sin intervención manual.",
+      "acceptance": [
+        "Al arrancar, el agente lee el `LocalStore`, reanuda o reencola los jobs que quedaron `running` y reenvía los resultados pendientes",
+        "Ante pérdida de conexión con el backend, el agente entra en modo degradado: deja de aceptar jobs nuevos, conserva el trabajo en curso y reintenta reconectar con backoff",
+        "Recuperada la conexión, el agente se re-registra si su sesión expiró y reanuda heartbeat, consumo y reporte automáticamente",
+        "Una caída del broker no mata al agente: la reconexión es automática y los jobs en vuelo no se pierden",
+        "El agente detecta y limpia estado local corrupto o inconsistente (jobs sin spec, temporales huérfanos) en el arranque, dejándolo registrado",
+        "`tests/integration/test_recovery.py` cubre: crash y reinicio con job a medias, backend caído y recuperado, broker caído y recuperado, y estado local corrupto"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 19,
+      "name": "resource_management",
+      "title": "Gestión de recursos y backpressure",
+      "description": "Control del consumo de CPU, memoria y disco en el endpoint: límites de concurrencia dinámicos, backpressure hacia la cola, cuotas de disco para datos temporales y limpieza automática.",
+      "acceptance": [
+        "El agente deja de consumir mensajes nuevos cuando alcanza `max_workers` o supera los umbrales configurados de memoria o disco, y lo reanuda al bajar de ellos",
+        "Existe un directorio de trabajo por job que se elimina siempre al terminar, tanto en éxito como en fallo o cancelación",
+        "Al arrancar se purgan los directorios temporales de ejecuciones anteriores que ya no tienen job asociado",
+        "Superada la cuota de disco configurada, los jobs nuevos se rechazan con causa `resource_exhausted` en lugar de llenar el disco del endpoint",
+        "El heartbeat reporta uso de CPU, memoria, disco y slots ocupados, y el backend lo expone en `GET /v1/agents`",
+        "`tests/unit/test_resources.py` cubre: activación y liberación de backpressure, limpieza tras éxito y tras fallo, purga en arranque y rechazo por cuota"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 20,
+      "name": "structured_logging",
+      "title": "Logging estructurado y correlación",
+      "description": "Logging en formato JSON en agente y backend, con campos comunes y correlación por job, agente y petición, que permita seguir una operación completa a través de todos los componentes.",
+      "acceptance": [
+        "Existe `src/geoagent/common/logging.py` con un configurador único usado por agente y backend",
+        "Cada línea de log es un objeto JSON con al menos `timestamp`, `level`, `event`, `component`, `agent_id`, `job_id`, `request_id` y `message`",
+        "`job_id` y `request_id` se propagan automáticamente por contexto: no hace falta pasarlos a mano en cada llamada a logger",
+        "Las excepciones se registran con `event`, tipo de error, causa clasificada y stack trace en un campo dedicado",
+        "Ningún log contiene tokens, credenciales ni payloads completos del dataset; los campos sensibles salen enmascarados",
+        "`tests/unit/test_logging.py` cubre: formato JSON válido, presencia de campos obligatorios, propagación de contexto entre tareas concurrentes y enmascarado de secretos"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 21,
+      "name": "log_manager",
+      "title": "Log Manager centralizado",
+      "description": "Ingesta de logs de los agentes en el backend: envío por lotes desde el endpoint con buffer local, almacenamiento con retención y API de consulta filtrada.",
+      "acceptance": [
+        "`POST /v1/logs` acepta lotes de eventos de log de un agente autenticado y los persiste",
+        "El agente bufferiza logs en disco y los envía por lotes; si el backend no está disponible, los conserva hasta un límite configurado y los reenvía después",
+        "Alcanzado el límite del buffer, se descartan los eventos más antiguos de menor severidad y se registra cuántos se perdieron",
+        "`GET /v1/logs` permite filtrar por `agent_id`, `job_id`, `level`, rango temporal y texto, con paginación",
+        "Existe una política de retención configurable que purga eventos antiguos sin bloquear la ingesta",
+        "`tests/unit/test_log_manager.py` y `tests/integration/test_log_shipping.py` cubren: envío por lotes, buffer con backend caído, descarte por límite, filtros de consulta y purga por retención"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 22,
+      "name": "log_investigation_tool",
+      "title": "Herramienta de investigación de logs",
+      "description": "CLI de análisis para soporte y troubleshooting que reconstruye la traza completa de un job, resume errores por frecuencia y permite acotar incidentes sobre los logs centralizados.",
+      "acceptance": [
+        "`geoagent-logs trace --job-id <id>` imprime en orden cronológico todos los eventos del job en todos los componentes, con el tiempo transcurrido entre ellos",
+        "`geoagent-logs errors --since <ts>` agrupa los errores por tipo y causa, con conteo y agentes afectados, ordenados por frecuencia",
+        "`geoagent-logs agent --id <id>` resume el estado, últimos heartbeats, jobs recientes y fallos de un agente",
+        "Los comandos aceptan `--format json` para salida procesable y devuelven exit code != 0 si el identificador consultado no existe",
+        "Existe `docs/troubleshooting.md` que documenta, con ejemplos reales de salida, cómo diagnosticar al menos: job atascado, agente que no reporta y fallos repetidos en una partición",
+        "`tests/unit/test_log_tool.py` cubre: traza completa y ordenada, agrupación de errores, resumen de agente, salida JSON e identificador inexistente"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 23,
+      "name": "triage_and_failure_handling",
+      "title": "Triage de fallos y operación de la DLQ",
+      "description": "Clasificación operativa de fallos y herramientas para actuar sobre ellos: inspección de la dead letter queue, reencolado de jobs, cuarentena de agentes problemáticos y runbook de escalado.",
+      "acceptance": [
+        "Todo job fallido almacena una causa normalizada (`network`, `timeout`, `data_source`, `resource_exhausted`, `bad_spec`, `agent_crash`, `retries_exhausted`) y no un texto libre",
+        "`GET /v1/dlq` lista los mensajes en dead letter queue con su job, intentos y último error; `POST /v1/dlq/{id}/requeue` los devuelve a la cola principal",
+        "`POST /v1/agents/{id}/quarantine` impide que un agente reciba jobs nuevos sin desregistrarlo, y existe la operación inversa",
+        "El backend marca automáticamente como sospechoso a un agente que supera un umbral configurable de fallos consecutivos, y lo registra como evento",
+        "Existe `docs/runbook.md` con la severidad, el diagnóstico y la acción correctiva de cada causa normalizada",
+        "`tests/unit/test_triage.py` cubre: clasificación de cada causa, listado y requeue desde DLQ, cuarentena manual y cuarentena automática por umbral"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 24,
+      "name": "unit_test_suite",
+      "title": "Suite de tests unitarios y cobertura",
+      "description": "Consolidación de la batería de tests unitarios con fixtures compartidas, dobles de prueba para red, reloj y broker, y un umbral de cobertura exigido en CI.",
+      "acceptance": [
+        "Existe `tests/conftest.py` con fixtures reutilizables: store temporal, backend simulado, cola en memoria, reloj controlado y fuente geoespacial local",
+        "`make test-unit` ejecuta toda la suite unitaria sin red real, sin broker real y sin credenciales de Earth Engine",
+        "La cobertura de los paquetes `common`, `agent` y `backend` es al menos del 85% y CI falla por debajo de ese umbral",
+        "La suite unitaria completa termina en menos de 60 segundos y no depende del orden de ejecución",
+        "Los tests que dependen del tiempo usan el reloj controlado, sin `sleep` reales",
+        "`make test-unit` corre en verde en CI en cada push"
+      ],
+      "sdd": false,
+      "status": "pending"
+    },
+    {
+      "id": 25,
+      "name": "integration_test_suite",
+      "title": "Suite de tests de integración",
+      "description": "Tests que levantan backend, broker y varios agentes reales en un entorno efímero y verifican el comportamiento del sistema completo, incluidos los caminos de fallo entre componentes.",
+      "acceptance": [
+        "Existe un entorno reproducible (compose o fixture de sesión) que levanta backend, broker y N agentes, y lo derriba al terminar",
+        "`make test-integration` ejecuta la suite contra ese entorno y es repetible sin limpieza manual entre ejecuciones",
+        "Un test verifica el reparto: M jobs entre N agentes terminan todos en `succeeded` y cada partición se procesa exactamente una vez",
+        "Hay tests de integración para: caída y recuperación del backend, caída y recuperación del broker, muerte de un agente con job en curso y reentrega duplicada",
+        "Los tests usan puertos y directorios efímeros y pueden correr en paralelo con otra instancia de la suite",
+        "La suite de integración corre en CI en un job separado del unitario y publica los logs del entorno cuando falla"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 26,
+      "name": "spark_aggregation",
+      "title": "Procesamiento distribuido de resultados con Apache Spark",
+      "description": "Pipeline Spark que consume los resultados producidos por los agentes y calcula agregaciones a escala sobre el dataset geoespacial: series temporales por región, comparativas entre ventanas y detección de cambios de cobertura.",
+      "acceptance": [
+        "Existe `src/geoagent/spark/aggregate.py` ejecutable con `spark-submit`, que lee el almacén de resultados particionado y acepta filtros de dataset, región y rango temporal",
+        "El job produce al menos: distribución de clases de cobertura por región y ventana temporal, y delta entre dos ventanas para detectar cambio de cobertura",
+        "El esquema de lectura es explícito, no inferido, y un resultado con esquema incompatible se descarta a una ruta de rechazos en lugar de romper el job",
+        "La salida se escribe particionada por región y fecha, y reejecutar el job sobre la misma entrada produce la misma salida (idempotente)",
+        "El job procesa correctamente un volumen de al menos 100k resultados generados sintéticamente, y su tiempo queda registrado en `docs/spark.md`",
+        "`tests/integration/test_spark_aggregate.py` cubre, con una SparkSession local: agregación por región, delta temporal, registro con esquema inválido e idempotencia de la salida"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 27,
+      "name": "fault_injection",
+      "title": "Inyección de fallos y escenarios de degradación",
+      "description": "Mecanismo controlado para provocar fallos en el sistema (latencia, errores HTTP, caídas de broker, corrupción de estado, muerte de agentes) y suite de escenarios que valida que las políticas de retry, idempotencia y recovery funcionan bajo estrés.",
+      "acceptance": [
+        "Existe `src/geoagent/common/faults.py` con inyectores activables por configuración: latencia, error HTTP, pérdida de conexión, duplicación de mensajes, fallo de la fuente geoespacial y corrupción del store",
+        "La inyección de fallos está desactivada por defecto y solo puede activarse explícitamente, nunca en configuración de producción",
+        "`tools/chaos.py` permite ejecutar un escenario nombrado contra el entorno de integración y reporta el resultado",
+        "Existe un escenario por cada mecanismo de resiliencia: reintentos, idempotencia, reencolado por heartbeat perdido, recuperación tras crash y DLQ",
+        "En todos los escenarios el sistema termina con todos los jobs en estado terminal y sin resultados duplicados ni particiones perdidas",
+        "`tests/integration/test_chaos.py` ejecuta los escenarios y verifica el invariante de consistencia final"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 28,
+      "name": "observability",
+      "title": "Métricas y observabilidad del fleet",
+      "description": "Exposición de métricas operativas de backend y agentes, endpoint de estado agregado del sistema y alertas básicas sobre las condiciones que un ingeniero de soporte necesita vigilar.",
+      "acceptance": [
+        "El backend expone `/metrics` en formato Prometheus con al menos: jobs por estado, latencia de ejecución, tasa de fallos por causa, agentes por estado, profundidad de cola y tamaño de DLQ",
+        "El agente expone sus propias métricas: jobs procesados, fallos, reintentos, slots ocupados y latencia hacia el backend",
+        "`GET /v1/status` devuelve un resumen agregado del sistema apto para un panel: fleet, cola, throughput reciente y errores recientes",
+        "Existen reglas de alerta declaradas para: sin agentes online, DLQ creciendo, tasa de fallos por encima de umbral y jobs `running` más allá de su timeout",
+        "Las métricas no se pierden al reiniciar el backend más allá de los contadores en memoria, y esto está documentado en `docs/observability.md`",
+        "`tests/unit/test_metrics.py` cubre: presencia y tipo de cada métrica, actualización tras un ciclo de job exitoso y fallido, y contenido de `/v1/status`"
+      ],
+      "sdd": true,
+      "status": "pending"
+    },
+    {
+      "id": 29,
+      "name": "end_to_end_workflow",
+      "title": "Flujo end-to-end y demo reproducible",
+      "description": "Integración final de todas las capacidades en un flujo único y reproducible: someter un trabajo geoespacial grande, repartirlo entre varios agentes, sobrevivir a fallos inyectados, agregar los resultados con Spark y verificar la consistencia del conjunto.",
+      "acceptance": [
+        "`make demo` levanta backend, broker y al menos 3 agentes, somete un trabajo particionado en al menos 200 particiones y termina sin intervención manual",
+        "Durante la demo se inyecta al menos un fallo (muerte de un agente y corte temporal del backend) y el sistema completa igualmente todas las particiones",
+        "Al terminar: cada partición tiene exactamente un resultado, ningún job queda en estado no terminal y la DLQ está vacía o justificada por el escenario",
+        "La demo lanza el job de Spark sobre los resultados y publica las agregaciones finales en la ruta de salida",
+        "`tools/verify_e2e.py` comprueba automáticamente los invariantes anteriores y devuelve exit code != 0 si alguno falla",
+        "Existe `docs/demo.md` con el diagrama de arquitectura, los pasos de ejecución y la salida esperada",
+        "`tests/integration/test_end_to_end.py` ejecuta una versión reducida del flujo completo en CI"
+      ],
+      "sdd": true,
+      "status": "pending"
+    }
+  ]
+}
