@@ -23,7 +23,7 @@
         "`pytest` corre en verde con al menos un test de humo en `tests/unit/test_smoke.py`"
       ],
       "sdd": false,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 2,
