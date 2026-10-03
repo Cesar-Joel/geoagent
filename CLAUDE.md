@@ -29,6 +29,11 @@ implementar.
   - Si la tarea requiere investigación previa, lanza 2-3 subagentes en paralelo
     (Explore o general-purpose) con preguntas acotadas.
 
+### Idioma
+
+Háblale al humano en **español**. El código va en inglés; ver la sección
+"Idioma" de `docs/conventions.md`.
+
 ### Protocolo de arranque (al recibir la primera tarea)
 
 1. Lee `AGENTS.md` para orientarte.
