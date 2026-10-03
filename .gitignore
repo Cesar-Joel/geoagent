@@ -1,7 +1,5 @@
 __pycache__/
 *.py[cod]
-.notes.json
-.notes_*.json
 *.tmp
 .DS_Store
 .venv/

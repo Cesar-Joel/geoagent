@@ -47,6 +47,17 @@ import httpx
 from geoagent.common.models import Job
 ```
 
+## Idioma
+
+- **Código (`src/`, `tests/`): inglés.** Nombres de variables, funciones y
+  clases, comentarios, docstrings y cualquier cadena que se imprima en un
+  error, un log o un test.
+- **Todo lo demás: español.** La conversación con el humano, los specs
+  (`specs/`), los informes y la bitácora (`progress/`), y la documentación
+  (`docs/`, `README.md`, `AGENTS.md`).
+- Los identificadores de código citados dentro de un texto en español se
+  dejan tal cual, en inglés y entre backticks (p. ej. `_check_payload`).
+
 ## Tests
 
 - Un archivo de test por módulo: `tests/unit/test_<módulo>.py` para unitarios y `tests/integration/test_<área>.py` para integración.
@@ -84,7 +95,7 @@ class PermanentGeoDataError(GeoAgentError):
 
 Por defecto **no** se escriben. Solo se permiten cuando explican un **por qué**
 no obvio (p. ej. workaround documentado, invariante sutil, decisión de
-protocolo con la cola). Los nombres deben hacer el resto.
+protocolo con la cola). Los nombres deben hacer el resto. Los comentarios tienen que ser en inglés.
 
 ## Logging
 
