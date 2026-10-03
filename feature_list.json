@@ -39,7 +39,7 @@
         "`tests/unit/test_models.py` cubre: round-trip serialización, rechazo de versión desconocida, transiciones válidas e inválidas de `JobStatus` y validación de campos faltantes"
       ],
       "sdd": true,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 3,
