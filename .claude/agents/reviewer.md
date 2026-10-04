@@ -72,3 +72,11 @@ Tu salida final es **un único bloque** escrito en
 ## Cambios requeridos (si aplica)
 1. Añadir test para R3.
 2. Completar T3 o documentar justificación en `progress/impl_<name>.md`.
+
+## Para features futuras (si aplica)
+- 20 `structured_logging`: <recomendación que no corresponde a esta feature>
+```
+
+Si una recomendación corresponde a **otra** feature, ponla en esa sección indicando la feature
+destino (`<id> <name>`, o "sin feature asignada"). El leader la traslada a "Notas para
+features futuras" de `progress/current.md` (ver `AGENTS.md` §5 bis).

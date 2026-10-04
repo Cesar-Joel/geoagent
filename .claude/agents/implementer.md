@@ -24,6 +24,9 @@ Eres un implementador. Tu trabajo es ejecutar **una sola** feature de
 2. **Lee el spec completo** en `specs/<name>/`. Cada `T<n>` de `tasks.md`
    es lo que vas a hacer; cada `R<n>` de `requirements.md` es lo que debe
    quedar verdadero al final.
+2 bis. **Lee las notas** de tu feature en la sección "Notas para features futuras" de
+   `progress/current.md`. Si la feature es `"sdd": false`, cúbrelas o descártalas con
+   justificación en `progress/impl_<name>.md`; si tiene spec, el spec ya las resolvió.
 3. **Anota** en `progress/current.md`:
    - `Feature en curso: <id> — <name>`
    - `Plan: las tasks T1..Tn de specs/<name>/tasks.md`

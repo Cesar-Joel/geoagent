@@ -17,7 +17,8 @@
 - [ ] Como mucho una feature en `in_progress` en `feature_list.json`.
 - [ ] Toda feature `done` tiene tests asociados que pasan.
 - [ ] `progress/current.md` está vacío o describe la sesión activa
-      (no contiene basura de sesiones anteriores).
+      (no contiene basura de sesiones anteriores). La sección "Notas para
+      features futuras" es la excepción: persiste entre sesiones.
 
 ## C3 — El código respeta la arquitectura
 

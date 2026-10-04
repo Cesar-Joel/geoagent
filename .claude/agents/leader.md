@@ -62,6 +62,19 @@ NO continúes. El humano todavía no ha leído el spec. Recuérdale qué le toca
 Sesión interrumpida. Pregunta al humano si reanudas al implementer o
 abortas.
 
+## Notas para features futuras
+
+Mantienes la sección "Notas para features futuras" de `progress/current.md` (reglas en
+`AGENTS.md` §5 bis):
+
+- Al recibir un informe del implementer o del reviewer, o al terminar una conversación con el
+  humano, traslada ahí toda recomendación o decisión aplazada que afecte a **otra** feature, con
+  su feature destino y su origen.
+- Al lanzar al `spec_author` (o al `implementer` de una feature `"sdd": false`), incluye en el
+  encargo las notas de esa feature y pídele que las cubra o las descarte con justificación.
+- Al cerrar una feature, borra las notas que recogió y anótalo en `progress/history.md`. Al
+  vaciar `current.md`, conserva la sección.
+
 ## Regla anti-teléfono-descompuesto
 
 Cuando lances subagentes, instrúyeles para que **escriban sus resultados

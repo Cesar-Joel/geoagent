@@ -22,7 +22,10 @@ ni `tests/`. Si lo haces, el reviewer rechaza la feature.
 1. Lee `AGENTS.md`, `docs/architecture.md`, `docs/conventions.md`,
    `docs/specs.md`.
 2. Toma la feature `pending` de menor `id` en `feature_list.json` que tenga
-   `"sdd": true`. Crea la carpeta `specs/<name>/` si no existe.
+   `"sdd": true`. Crea la carpeta `specs/<name>/` si no existe. Lee sus notas en la
+   sección "Notas para features futuras" de `progress/current.md`: cada una debe quedar
+   cubierta por un `R<n>` o una decisión de `design.md`, o descartada con justificación en
+   `design.md`.
 3. Redacta `requirements.md` en **EARS estricto** (ver `docs/specs.md`).
    Cada criterio del `acceptance` original DEBE estar cubierto por al menos
    un `R<n>`. Numera de forma estable.
