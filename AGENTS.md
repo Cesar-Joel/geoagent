@@ -80,9 +80,11 @@ Todo lo que surja en una sesión y corresponda a **otra** feature (recomendacion
 decisiones aplazadas, deuda de tooling) va a la sección "Notas para features futuras" de
 `progress/current.md`. Esa sección **sobrevive al cierre de sesión**.
 
-- **Formato:** un subapartado `### <id> <name>` por feature destino (o "Sin feature asignada"),
-  con una viñeta por nota que indique el **origen** (archivo y punto, p. ej. r1 de
-  `progress/review_<feature>.md`).
+- **Formato:** un subapartado `### <id> <name>` por feature destino (o "Sin feature asignada",
+  al final), **ordenados por id**, con una viñeta por nota que indique el **origen** (archivo y
+  punto, p. ej. r1 de `progress/review_<feature>.md`). Una nota que afecta a varias features se
+  escribe una sola vez, en la de menor id, indicando a qué otras afecta; cada una de las demás
+  lleva una viñeta "ver la nota de la feature <id>".
 - **Quién escribe:** el leader, al recibir cada informe del implementer o del reviewer, y
   cuando una conversación con el humano deje algo para más adelante. No se dejan notas para
   features futuras solo en los informes de `progress/`.
