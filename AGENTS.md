@@ -29,6 +29,7 @@
 | `docs/verification.md`       | Cómo verificar que tu trabajo funciona (incluye trazabilidad requirements)  | Antes de declarar una tarea como `done` |
 | `CHECKPOINTS.md`             | Criterios objetivos de "estado final correcto"                              | Para auto-evaluarte |
 | `.claude/agents/`            | Definiciones de subagentes (`leader`, `spec_author`, `implementer`, `reviewer`) | Si orquestas trabajo |
+| `.claude/skills/`            | Procedimientos reutilizables (`sesion-preguntas`: dudas del humano sobre el código; `pausar-sesion`: pausar y retomar una feature a medias) | Cuando el humano los invoque o el caso encaje |
 | `src/`                       | Código de la aplicación                                                     | Para implementar |
 | `tests/`                     | Tests automáticos                                                           | Para verificar |
 
@@ -64,6 +65,9 @@ pending → [spec_author] → spec_ready → ⏸ HUMANO → in_progress → [imp
    `progress/history.md`.
 
 ## 5. Cierre de sesión (lifecycle)
+
+Si hay que parar con la feature a medias, no apliques este cierre: usa la skill
+`pausar-sesion`, que guarda el estado y el siguiente paso sin vaciar `progress/current.md`.
 
 Antes de terminar:
 
