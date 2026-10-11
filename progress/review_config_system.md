@@ -327,3 +327,578 @@ Archivos revisados: `src/geoagent/common/config.py`, `tests/unit/test_config.py`
 - **19 `resource_management` / 11 `agent_concurrency_runtime`:** `max_workers` no tiene límite superior (`99999999999999999999999` desde el TOML se acepta), y `request_timeout`/`heartbeat_interval` aceptan valores subnormales (`5e-324`). Fijar en esas features los límites razonables (p. ej. `max_workers` ≤ núcleos o un tope configurable, timeout mínimo) y validarlos en `config.py`.
 - **7 `agent_http_client` / 9 `message_queue_layer`:** si se quiere un fallo temprano, validar la sintaxis del host (etiquetas DNS o IP) de `backend_url`/`queue_url` (m9), o al menos que el error de conexión nombre la clave de configuración y no repita la URL completa con su query.
 - **25 `integration_test_suite` (o la CI):** ejecutar `test_config` con Python 3.9 real para confirmar m10 (el puerto de las URL con `_`/signo/espacios, por cómo parsea `urlparse` en 3.9) y la rama `tomli`.
+
+## Ronda 7
+
+**Veredicto:** CHANGES_REQUESTED
+
+Entrada: puntos 8-16 de `progress/questions_config_system.md` (decisiones del 2026-10-06) y "## Ronda 7" de `progress/impl_config_system.md`. Archivos revisados: `src/geoagent/common/config.py`, `tests/unit/test_config.py`, `docs/config.md`. El cambio en `tests/unit/test_smoke.py` (`PYTHON_COLORS=0`) es ajeno a esta ronda (`progress/fix_smoke_color.md`). Es correcto y no afecta a `config`.
+
+### Evidencia ejecutada
+
+| Comando | Resultado |
+|---|---|
+| `make lint` | OK (`ruff check` limpio, 18 archivos formateados) |
+| `make test` | 136 passed, 1261 subtests, 2.07 s |
+| `./init.sh` | exit 0, "Entorno listo" (WARN informativo de integración) |
+| Python 3.9 | Sigue sin haber intérprete. `ast.parse(..., feature_version=(3, 9))` pasa en `config.py` y `test_config.py` |
+| Mutaciones | 20 mutaciones de `config.py` (script en el scratchpad; el archivo se restauró después). Se detectan 19 y sobrevive 1 (ver B5) |
+| Barrido a mano | Todas las ramas de error de `config.py` y todos los campos de los dos loaders, desde el entorno y desde el TOML |
+
+### Puntos 8-16
+
+- P8: [x] tablas por tipo de validación (`_HTTP_URL`, `_QUEUE_URL`, `_PORT`, `_POSITIVE_INT`, `_POSITIVE_FINITE_FLOAT`, `_LOG_LEVEL`, `_BIND_HOST`, `_PATH`, `_ANY_STR`, `_SECRET_TYPE`) y un mapa `FIELD_TYPES` escrito a mano. `test_every_field_is_classified` falla en los dos sentidos. Comprobé que se recorren los 10 campos del agente y los 9 del backend, desde las dos fuentes. Hay cambios de nombre frente a lo pedido: `_NON_EMPTY_STR` se dividió en `_BIND_HOST` y `_PATH`, y `_SECRET` pasó a llamarse `_SECRET_TYPE`. Son razonables (duda 5).
+- P9: [x] `_resolve` pasa los defaults por el parser (`config.py:363`). Se comprueban el diccionario y los tipos exactos, y hay un test con `mock.patch.dict` para tres defaults inválidos. La mutación "no validar los defaults" la detectan 3 tests.
+- P10: [x] los casos válidos comprueban valor y tipo con `assertIs(type(v), type(expected))` e incluyen la columna del número entre comillas. `test_file_path_from_env` comprueba también `request_timeout` (valor y tipo).
+- P11: [x] el inventario está aplicado: `LOADERS`, `_INT_FIELD` y `_OTHER_KEY`, con precedencia, archivo ausente, TOML inválido, archivo ilegible, `load_or_exit` y enmascarado probados con los dos loaders y, donde aplica, con las dos fuentes.
+- P12: [~] `host` usa `_bind_host` y `store_path`/`db_path` usan `_fs_path`. La aserción de "sin eco" ya es `assertNotIn(value)` + `assertNotIn(repr(value)[1:-1])` sobre `str` y `repr` de la excepción. **Pero el mínimo del punto 12 (texto imprimible y sin espacios) no se cumple para IPv6 con zona, y la regla de "nombre DNS válido" deja pasar nombres numéricos ambiguos** (B1, B2).
+- P13: [x] `_config_source` existe y `TestLoadOrExit` llama a `load_or_exit(loader, path, env=env)` con el loader real.
+- P14: [x] `TestUrlSecretsNeverEchoed` desaparece. Quedan `TestValidation` (qué se acepta) y `TestErrorMessages` (qué dice el mensaje).
+- P15: [x] `_views` y `_assert_shown` están a nivel de módulo y se usan en todos los sitios listados (`TestSecretMasking` y `TestQueueUrlQueryMasking`).
+- P16: [~] un `;` literal en el path de las dos URL se rechaza sin eco y `%3B`/`%3b` se acepta. Los cuatro casos de la tabla y `api;` están en `_url_invalid`, y `docs/config.md` está actualizado. **Pero el `;` en el netloc no se vigila: `http://h;token=s3cr3t` y `amqp://h;password=s3cr3t` se aceptan y salen tal cual en `repr()`** (B3).
+
+### Cobertura tras la consolidación (140 → 136 tests)
+
+Comparé caso a caso con `git show HEAD:tests/unit/test_config.py`. No se perdió ningún valor inválido ni válido de las tablas antiguas: `INVALID`, los tipos nativos, el texto del entorno, `m8b`, el número entre comillas, todas las ramas de `TestUrlSecretsNeverEchoed.cases`, el enmascarado y los secretos en archivo están todos en las tablas nuevas o en un test equivalente, y casi siempre ampliados a los dos loaders y las dos fuentes. Hay tres diferencias sin impacto:
+- La precedencia ya no prueba un entero (`max_workers`/`port`) sino `request_timeout`. La lógica de `_resolve` es la misma y los enteros se prueban desde las dos fuentes en las tablas.
+- El antiguo `test_control_characters_in_host_are_rejected_without_echo` comprobaba el texto "valid URL". Ahora no se comprueba, pero la mutación "`_check_host` solo sobre el hostname" sigue detectándose (12 fallos).
+- El caso de no escalar sin eco de `heartbeat_interval` pasa a `request_timeout`, que usa el mismo parser.
+
+Las mutaciones que se detectan son: el parser de cadenas con eco, `_fs_path` sin control de caracteres o solo con NUL, defaults sin validar, sin `_check_path` en cada URL, `_check_path` con `parsed.params`, DNS que admite `_`, etiqueta de 64 caracteres, `_bind_host` con eco, `_check_host` solo sobre el hostname, puerto 65536, clave desconocida aceptada, float que admite 0, entero sin `strip`, query sin valor sin enmascarar, secreto aceptado en el archivo, `_describe` sin truncar y precedencia invertida. **Sobrevive una: `_log_level` repitiendo el valor** (B5).
+
+### Búsqueda sistemática de la clase de fallo
+
+**(a) Mensajes de error que repiten valores:**
+
+| Rama | Repite | Estado |
+|---|---|---|
+| `_http_url`, `_queue_url`, `_bind_host`, `_fs_path`, `_log_level`, `_parse_str`, secreto en archivo | nada (solo la clave o el tipo) | OK. `_log_level` no está protegido por test (B5) |
+| `_parse_int`/`_parse_float`/rangos (`_describe`) | el texto escapado con `repr`, truncado a 40 caracteres: `GEOAGENT_MAX_WORKERS="1\nINFO s3cr3t"` da `got '1\nINFO s3cr3t'` | lo permite el punto 5. Ver D2 |
+| `_read_file`: `file not found`, `cannot read`, `invalid TOML in`, `is not valid UTF-8`, `nested too deeply` | **la ruta tal cual**, con caracteres de control crudos: `GEOAGENT_CONFIG_FILE="/x/a\nINFO fake"` da `config_file: file not found: /x/a` + salto de línea real + `INFO fake` en stderr. Lo mismo pasa con `\x1b[31m` (secuencias ANSI) | **B4** |
+| `_resolve`, clave desconocida (`field=key`) | **la clave del TOML tal cual**: `"x\nINFO fake" = 1` da un salto de línea real en stderr. `"s3cr3t" = 1` repite la clave | **B4** |
+| `TOMLDecodeError` | solo posición y carácter escapado (`Illegal character '\n'`), sin contenido | OK |
+
+**(b) Campos de texto que aceptan caracteres de control:**
+
+| Campo | Acepta | Estado |
+|---|---|---|
+| `backend_url`, `queue_url` | nada no imprimible (`isprintable` sobre toda la URL) | OK |
+| `log_level` | nada (lista cerrada) | OK |
+| `host` | **IPv6 con zona arbitraria**: `fe80::1%a\nINFO fake`, `fe80::1%a\x00b` y `fe80::1%a b` se aceptan (`ipaddress` admite cualquier texto tras `%`) | **B1** |
+| `store_path`, `db_path` | se rechaza `Cc` (NUL, `\n`, `\x85`), pero se aceptan ` ` (separador de línea), `‮` (RLO) y surrogates (`a\udcffb`; luego `open()` falla con `UnicodeEncodeError`, sin tipar y tarde) | D3 |
+| `queue_username`, `queue_password`, `auth_token`, `api_token` | **todo**: `u\r\nX-Injected: 1\x00` se acepta. En `repr`/`to_safe_dict` sale escapado (o enmascarado), pero el valor llega tal cual a las cabeceras HTTP (`auth_token`) y a la autenticación AMQP | D1 |
+
+**(c) Valores que llegan al objeto sin pasar por el parser:** por los loaders, ninguno: entorno, archivo y defaults pasan por `spec.parser`. La única vía es construir `AgentConfig(...)`/`BackendConfig(...)` a mano, que no valida nada. No forma parte del alcance de los loaders (ver "Para features futuras").
+
+### Bloqueantes
+
+1. **B1 — `host` acepta caracteres de control y espacios en la zona IPv6.** `ipaddress.ip_address("fe80::1%a\nINFO fake")` es válido, así que `_bind_host` lo devuelve. Esto incumple el mínimo del punto 12 ("imprimible, sin espacios"). Arreglo: en `_bind_host`, antes del intento de IP, rechazar todo `text` que no sea `isprintable()` o que contenga espacios, sin repetir el valor. Además, decidir sobre la zona (duda 1): recomiendo rechazar el `%` (bind a link-local con zona es raro) o, como mínimo, restringir la zona a `[A-Za-z0-9_.-]+`. Tests: filas `fe80::1%a\nb`, `fe80::1%a\x00b` (en el TOML, escapados) y `fe80::1%a b` en `_BIND_HOST.invalid`, y `fe80::1%eth0` en la tabla que corresponda según la decisión.
+2. **B2 — nombres numéricos ambiguos aceptados como DNS.** `010.0.0.1`, `0x7f.1`, `127.1`, `2130706433`, `999.1.1.1` y `1` pasan por la regla de etiquetas. `getaddrinfo` interpreta los primeros como IPv4 en notación `inet_aton`: `010.0.0.1` → **8.0.0.1** y `2130706433` → 127.0.0.1. No es "una IP o un nombre DNS válido" (RFC 1123 §2.1 y RFC 3696 §2: el TLD no puede ser totalmente numérico). Arreglo: rechazar el nombre si su última etiqueta es solo de dígitos. Recomiendo también el límite de 253 caracteres totales (duda 2). Tests: esas filas en `_BIND_HOST.invalid`.
+3. **B3 — `;` en el netloc se salta el punto 16.** `http://h;token=s3cr3t` y `amqp://h;password=s3cr3t` se aceptan (`urlsplit` lo pone en el netloc, no en el path) y el secreto sale tal cual en `repr()`/`to_safe_dict()`. Un `;` nunca es válido en un host, y la parte de usuario ya se rechaza, así que rechazarlo no entra en conflicto con la decisión. Arreglo: `_check_path` (o un `_check_semicolon`) rechaza un `;` en `urlsplit(text).netloc` además del path, con el mismo mensaje sin eco. Tests: las dos filas en `_url_invalid` (también con `?x=1` detrás).
+4. **B4 — la ruta del archivo y la clave desconocida se repiten tal cual, con caracteres de control.** Es la clase de fallo (a). `config_file: file not found: /x/a` + salto de línea real + `INFO fake` permite inyectar una línea falsa en cualquier log que capture stderr, y lo mismo pasa con una clave TOML entre comillas. Arreglo: un helper que muestre la ruta o la clave solo si es imprimible (y, para la clave, si coincide con `[A-Za-z0-9_.-]+`). Si no, un mensaje genérico ("path contains non-printable characters" o "unknown configuration key (non-printable name)", con `field` saneado). Tests en `TestErrorMessages`: ruta con `\n` y `\x1b` por argumento y por `GEOAGENT_CONFIG_FILE` en las cinco ramas de `_read_file` que la repiten (basta con "no existe" y "TOML inválido" como representantes), y una clave `"x\nINFO fake"`. En todos: ni el valor tal cual ni con el salto real en `str(exc)` ni en la salida de `load_or_exit`.
+5. **B5 — el test de "sin eco" excluye tipos que no deben repetir el valor.** `_LOG_LEVEL` y `_ANY_STR` tienen `"no_echo": False`, así que la mutación "`_log_level` repite el valor" sobrevive a toda la suite. Con los dos a `True`, el código actual pasa: lo comprobé en una copia (296 subtests OK). Arreglo: ponerlos a `True`. Mejor aún, que `no_echo` sea `True` por defecto y que solo los tipos numéricos lo desactiven, con un comentario que cite el punto 5.
+
+### Decisiones pendientes del humano (recomendadas, no bloquean por sí solas)
+
+- **D1** (recomendado: sí, en esta ronda). Hoy `queue_username` y los tres secretos aceptan `\r`, `\n` y NUL. Propongo rechazar los caracteres de control (`Cc`) en esos campos, sin repetir el valor. `auth_token` irá en una cabecera `Authorization` (riesgo de inyección de cabeceras si la librería HTTP no lo filtra) y las credenciales AMQP van al protocolo. El punto 8 los dejó sin validación (`_ANY_STR`/`_SECRET`) porque reflejaba el código de entonces, no por una decisión explícita sobre los caracteres de control. Si se aprueba: filas en `_ANY_STR.invalid` y un `_SECRET_TYPE.invalid` solo de entorno, con no eco.
+- **D2** (opcional). `_describe` repite el texto de los campos numéricos escapado con `repr`, incluidos los caracteres de control. Lo permite el punto 5. Propongo repetirlo solo si es ASCII imprimible y, si no, decir solo `got str`.
+- **D3** (recomendado, barato). `_fs_path` solo rechaza `Cc`. Propongo la misma regla que las URL (`isprintable()`, que admite el espacio ASCII), así se rechazan ` `, RLO y los surrogates (este último evita el `UnicodeEncodeError` sin tipar al abrir el archivo). Contrapartida: se rechazarían rutas con NBSP u otros espacios Unicode.
+
+### Valoración de las dudas del implementer
+
+1. Zona IPv6: **bloqueante** en cuanto a su contenido (B1). Aceptar la zona en sí es opcional y lo decide el humano (recomiendo rechazar `%`).
+2. Nombres numéricos y longitud total: **bloqueante** en cuanto al TLD numérico (B2). El límite de 253 caracteres es opcional (recomendado, una línea). Rechazar `h.` está bien: es una dirección de escucha, no un FQDN absoluto.
+3. Surrogates en las rutas: **opcional** (D3, recomendado).
+4. `;` en la query: **opcional, no hace falta** (la query ya se enmascara entera). En el netloc: **bloqueante** (B3).
+5. Cambio de nombre de los tipos de validación: **no bloqueante**. Conviene dejarlo anotado en `questions_config_system.md` (punto 8).
+6. El error de un default inválido no dice que viene del default: **opcional**. Es un error de programador, y el test y el arranque ya lo detectan con la clave. Añadir "(default)" al mensaje es barato pero prescindible.
+
+### Observaciones menores (no bloquean)
+
+- m11. `test_non_scalar_in_numeric_field_reports_only_the_type` solo comprueba que falta `s3cr3t`, no que el mensaje diga `got dict`/`got list`, como indica su nombre. Añadir `assertIn(f"got {tipo}", ...)`.
+- m12. `_PATH` y `_BIND_HOST` comparten las filas de no escalares, pero `_HTTP_URL`/`_QUEUE_URL` no incluyen fecha ni `float`. Se puede añadir `1979-05-27` por coherencia (mismo parser `_parse_str`).
+- m13. `docs/config.md`: la columna de `queue_url`/`backend_url` de la tabla no menciona el `;`, que solo aparece en la sección de notas. Basta con una referencia.
+
+### Acceptance de la feature 3
+
+- A1-A6: [x] sin regresiones en lo que ya cubrían. A4/A5 ("inválida → aborta nombrando la clave", "sin secretos en logs") quedan incompletos por B1, B3 y B4.
+
+### Checkpoints
+
+- C1: [x] están los archivos base y los 4 docs; `./init.sh` termina con exit 0.
+- C2: [x] solo la feature 3 está en `in_progress` (reabierta con la autorización del humano); `progress/current.md` describe la sesión activa.
+- C3: [x] solo hay paquetes previstos, sin `print()` en `src/` y sin dependencias nuevas (`ipaddress`, `unicodedata` y `re` son de la stdlib). Los tests no contienen secretos reales.
+- C4: [x] con la salvedad heredada (cobertura no medible hasta añadir `pytest-cov`). Los tests usan `tempfile`, sin red y sin mocks de filesystem (`mock.patch.dict` solo sobre `_*_SPECS` y `os.environ`), y tardan < 60 s. `make test-integration` no aplica.
+- C5: [ ] pendiente del cierre: no hay archivos sueltos sospechosos (`.claude/skills/` y `progress/fix_smoke_color.md` son del arnés), pero la entrada en `history.md` y el estado `done` corresponden al cierre.
+- C6: [x] no aplica (`sdd: false`).
+
+### Cambios requeridos
+
+1. B1: `_bind_host` rechaza texto no imprimible o con espacios también en IPv6 con zona, y decidir la zona. Con tests.
+2. B2: rechazar los nombres cuya última etiqueta sea totalmente numérica (y, recomendado, más de 253 caracteres). Con tests.
+3. B3: rechazar `;` en el netloc de `backend_url` y `queue_url`, sin eco. Con tests.
+4. B4: no repetir la ruta del archivo ni la clave desconocida si contienen caracteres no imprimibles. Con tests por las dos vías de ruta y por `load_or_exit`.
+5. B5: `no_echo` a `True` en `_LOG_LEVEL` y `_ANY_STR` (o `True` por defecto salvo en los numéricos).
+6. Si el humano aprueba D1/D3, aplicarlas en la misma ronda.
+
+### Para features futuras
+
+- **5 `backend_api_skeleton`:** el `host` validado se usa en el `bind`. Que el error de `bind` (`EADDRNOTAVAIL`, `EADDRINUSE`) nombre `host`/`port` y no repita otra cosa. Si se admite la zona IPv6, comprobar que el servidor HTTP elegido la acepta.
+- **7 `agent_http_client`:** no confiar en que `auth_token` esté libre de `\r\n` si no se aprueba D1. Que el cliente use una librería que rechace las cabeceras con saltos de línea, y un test con un token así.
+- **9 `message_queue_layer`:** lo mismo para `queue_username`/`queue_password`. Además, no pasar `queue_url` sin enmascarar a los logs de la librería AMQP (se mantiene lo de la ronda 6).
+- **20 `structured_logging`:** el logger JSON debe escapar los caracteres de control en todos los campos (no solo en el `repr` de la config) y tener un test con `\n` y `\x1b` en un mensaje. Así un error de configuración con datos del usuario no puede romper una línea de log aunque B4 se escape por otra rama.
+- **Sin feature asignada (o la primera que construya `AgentConfig`/`BackendConfig` a mano, p. ej. 24 `unit_test_suite`):** el constructor de las dataclasses no valida nada. O se documenta que los loaders son la única entrada válida, o se añade un `__post_init__` que pase cada campo por su parser.
+
+## Ronda 8
+
+**Veredicto:** CHANGES_REQUESTED
+
+Entrada: B1-B5 y m11-m13 de "## Ronda 7", las decisiones del humano del 2026-10-07 (`progress/questions_config_system.md`) y "## Ronda 8" de `progress/impl_config_system.md`. Archivos revisados: `src/geoagent/common/config.py`, `tests/unit/test_config.py` y `docs/config.md`.
+
+### Evidencia ejecutada
+
+| Comando | Resultado |
+|---|---|
+| `make lint` | OK (`ruff check` limpio, 18 archivos formateados) |
+| `make test` | 142 passed, 1885 subtests, 2.21 s |
+| `./init.sh` | exit 0, "Entorno listo" (WARN informativo de integración) |
+| Sondas a mano | Script en el scratchpad (`r8/probe.py`): host, `log_level`, rutas `Path`/`bytes`, errores de TOML, claves y rutas largas, URL, secretos con `Cf`, `load_or_exit` |
+| Mutaciones propias | 25 mutaciones de `config.py` (`r8/mut.py`; el archivo se restauró y se comparó con `diff`). Se detectan 23 y sobreviven 2 (m15, m16) |
+| Cobertura frente a la ronda 7 | Comparé con el borrador de la ronda 7 que hay en el scratchpad (`head.py` + `body.py`): no falta ningún test (35 → 41 funciones) y las únicas líneas eliminadas son filas o banderas que ahora están ampliadas (`no_echo`, `_ANY_STR`/`_SECRET_TYPE` con `_CONTROL_CHARS`) |
+
+### Bloqueantes y decisiones de la ronda 7
+
+- B1 (zona IPv6, imprimible, sin espacios): [x] `config.py:152`, con las filas de `_BIND_HOST.invalid` desde las dos fuentes. Comprobado.
+- B2 (TLD numérico): [x] según la regla que pedí, **pero la regla se queda corta** (ver el nuevo B2).
+- B3 (`;` en el netloc): [x] `_check_semicolon`, con 5 filas por esquema. La mutación "con `params`" la detectan 56 tests.
+- B4 (ruta y clave no imprimibles): [x] en las 5 ramas que repiten la ruta, por argumento y por `GEOAGENT_CONFIG_FILE`, por excepción y por `load_or_exit`. Cada rama con la ruta cruda la detectan 20 tests. La rama `ValueError` no está en la tabla (m15).
+- B5 (`no_echo` por defecto): [x] `vtype.get("no_echo", True)`, y solo los tres tipos numéricos lo desactivan.
+- D1 (`Cc` en usuario y secretos): [x]. D3 (`isprintable` en rutas): [x]. D2 (eco numérico solo si es ASCII imprimible): [x]. Límite de 253: [x], con la frontera probada (253 válido, 254 inválido; `<` en lugar de `<=` se detecta). `(default)`: [x]. Duda 4 (`;` en la query aceptado): [x], con la fila válida `amqp://h/v?a=1;b=2`. m11-m13: [x].
+
+### Búsqueda sistemática de la clase de fallo
+
+| Rama / entrada | Resultado |
+|---|---|
+| `_read_file` (las 5 ramas que repiten la ruta) por argumento y por entorno | OK con `str`. **Con `pathlib.Path` o `bytes`, `AttributeError` sin tipar** (nuevo B1) |
+| Rama `ValueError` (NUL en la ruta) | No repite nada, pero ningún test lo vigila (m15) |
+| `TOMLDecodeError` | Repite nombres de clave (`Cannot declare ('x\\nINFO fake',) twice`, `Duplicate inline table key 's3cr3t'`) con `repr`: es imprimible y ocupa una línea, pero no se trunca (ver hueco 2) |
+| Clave desconocida simple | Se repite sin límite: una clave de 100 000 caracteres da un mensaje de 100 027 (hueco 2) |
+| Ruta imprimible larga | Se repite entera: 3 231 caracteres por `GEOAGENT_CONFIG_FILE` (hueco 2) |
+| `_describe` | Solo repite ASCII imprimible, truncado. OK |
+| `(default)` | Solo añade el motivo, sin el valor. OK |
+| `load_or_exit` | Siempre una sola línea imprimible en las ramas probadas. Con `Path` da traceback (nuevo B1) |
+| `host` | **`0x7f`, `0X7F`, `0x7f.0x1` y `1.0x1` se aceptan**, y `getaddrinfo` los lee como `0.0.0.127`, `127.0.0.1` y `1.0.0.1` (nuevo B2) |
+| `log_level` | `ınfo` (U+0131) se acepta como `INFO` por el `upper()` Unicode (m14) |
+| Secretos y `queue_username` | Se aceptan `Cf`/`Zs` (`‮`, `﻿`, ` `, ` `). Es lo decidido (solo `Cc`), ver hueco 5 |
+| `backend_url`/`queue_url` | Se aceptan `http://h h/`, `http://good\.evil.com/`, `http://ｅxample.com/` y `http://h%0aINFO/`. No repiten nada, pero la sintaxis del host de las URL se dejó para las features 7/9 (m9). Ver "Para features futuras" |
+| `GEOAGENT_CONFIG_FILE=""` | Se trata como si no estuviera, sin test ni documentación (m16) |
+
+### Bloqueantes
+
+1. **B1 — regresión: `path` como `pathlib.Path` rompe la carga con un `AttributeError` sin tipar.** `_shown_path(path)` llama a `path.isprintable()` antes del `open`. En el código de `HEAD`, `load_agent_config(Path("ok.toml"))` cargaba bien y una ruta inexistente daba `ValidationError`. Ahora las dos fallan con `AttributeError`, y `load_or_exit` lo deja salir como traceback, porque solo captura `ValidationError`. Es probable que un CLI (argparse `type=Path`) o una feature futura pase un `Path`. Arreglo: al entrar en `_read_file` (o en `_resolve`), `path = os.fspath(path)` y, si el resultado no es `str` (es decir, `bytes`), lanzar `ValidationError("config file path must be text", field="config_file")`. Tests: un `Path` válido carga, y un `Path` inexistente y unos `bytes` dan `ValidationError` con `field == "config_file"`, con los dos loaders y también por `load_or_exit`. Si se quiere, ajustar la anotación a `str | os.PathLike[str] | None`.
+2. **B2 — nombres hexadecimales ambiguos aceptados como `host` (hueco 1 del implementer).** Es la misma clase que el B2 de la ronda 7. La regla que propuse entonces ("última etiqueta solo dígitos") no contemplaba la notación hexadecimal de `inet_aton`: `0x7f` hace bind a `0.0.0.127` y `0x7f.0x1` a `127.0.0.1`, comprobado con `getaddrinfo`. Arreglo: tratar como numérica la última etiqueta que sea solo dígitos **o** que encaje con `0[xX][0-9A-Fa-f]*` (la regla "ends in a number" del estándar URL de WHATWG). Tests en `_BIND_HOST.invalid`: `0x7f`, `0X7F`, `0x7f.0x1`, `1.0x1` y `0x`. Para que `a.0x1g` siga siendo válido, añadir `0xg` y `a.0x1g` a las filas válidas. Actualizar la fila de `host` en `docs/config.md`.
+
+### Mutaciones
+
+- Detectadas (23): la ruta cruda en cada una de las 5 ramas, `_shown_path` con `isascii`, `strerror` con `exc.filename`, la clave con `match` (prefijo), la clave no imprimible con `field=key`, la etiqueta DNS con `match`, `_MAX_ECHO = 4000`, el truncado anulado para `str`, `_plain_str` con `Cf` o solo con el primer carácter, `;` con `params`, el TLD numérico solo si todo es numérico, el límite con `<`, `%` solo al principio, `_check_host` sin `text.isprintable()`, `_fs_path` sin `strip`, `(default)` con el valor, `load_or_exit` con `{exc!r}` y el secreto aceptado en el archivo.
+- Sobreviven (2): la rama `ValueError` repitiendo la ruta (m15) y `GEOAGENT_CONFIG_FILE=""` tratado como ruta (m16).
+- Las 2 equivalentes que reporta el implementer (quitar `not text.isprintable()` y quitar `" " in text` en `_bind_host`) **son equivalentes**. Con el `%` excluido, `ipaddress` solo acepta dígitos y hexadecimales ASCII y la regla DNS solo `[A-Za-z0-9-]`, así que cualquier carácter no imprimible o espacio interior se rechaza igual. El `strip` ya quita los de los extremos. Conviene mantenerlas: las pide la decisión y protegen ante un cambio futuro de `ipaddress` o de la regla DNS.
+
+### Valoración de los huecos del implementer
+
+1. `0x7f` como nombre DNS: **bloqueante** (B2).
+2. La clave desconocida, la ruta imprimible y las claves en los errores de TOML no se truncan: **opcional, recomendado**. No pueden falsificar líneas (son imprimibles), pero un mensaje de 100 KB en stderr es un problema operativo. Un helper `_truncate(text)` con `_MAX_ECHO` (o 200) en `_shown_path`, en la clave y en el texto de `TOMLDecodeError` lo resuelve.
+3. `field="config_file"` para la clave no imprimible: **aceptable, sin cambios**. No se puede nombrar la clave, y `config_file` lleva al operador al sitio correcto.
+4. `cannot read` con `strerror` en vez de `str(exc)`: **correcto**. Evita repetir la ruta una segunda vez y sin pasar por el saneado.
+5. D1 solo con `Cc` (se aceptan U+2028, RLO, BOM y NBSP en usuario y secretos): **opcional**. Los secretos no se muestran, el usuario sale escapado por `repr` y estos caracteres no permiten inyectar cabeceras. Un BOM o un NBSP en un token suele ser un error al pegarlo, así que rechazarlos con `isprintable()` (como D3) ayudaría a diagnosticar, pero no hace falta. El rechazo de NBSP en rutas (D3) es la contrapartida ya aceptada.
+6. Construir las dataclasses o un `_Spec` a mano: heredado, ya está en "Para features futuras".
+
+### Observaciones menores (no bloquean)
+
+- m14. `_log_level` aplica `upper()` sobre texto Unicode: `ınfo` (i sin punto turca) se acepta como `INFO`. Exigir `text.isascii()` antes del `upper()` y añadir la fila `ınfo` a `_LOG_LEVEL.invalid`.
+- m15. `_PATH_BRANCHES` no incluye la rama `ValueError` (NUL en la ruta): la mutación `f"invalid config file path: {path}"` (que repite un NUL crudo) pasa toda la suite. Añadir `nul_in_path` a la tabla de `TestUntrustedNamesInErrors`, por argumento y por el `env` explícito.
+- m16. `GEOAGENT_CONFIG_FILE=""` se ignora (`or None`), sin test y sin documentación. Además, `docs/config.md` dice que una variable vacía "cuenta como valor". Documentar la excepción y añadir un test, o tratarla como error.
+- m17. El informe cita `test_error_from_env_or_file_does_not_say_default`, que no existe. La comprobación está en `test_invalid_values_are_rejected_naming_the_key` (`assertNotIn("(default)")`), así que la cobertura es correcta, pero hay que corregir el informe.
+- m18. Con Python 3.9.0-3.9.4, `ipaddress` aceptaba octetos con ceros a la izquierda (CVE-2021-29921, corregido en 3.9.5): allí `010.0.0.1` pasaría como IP y haría bind a `8.0.0.1`. Opciones: `requires-python = ">=3.9.5"` en `pyproject.toml`, o rechazar explícitamente los octetos con cero inicial en `_bind_host`. Barato. Recomiendo hacerlo junto con B2.
+
+### Acceptance de la feature 3
+
+- A1-A6: [x] sin regresiones en lo que ya cubrían, con dos salvedades: A1 (cargar desde el archivo) se rompe con `Path` (B1) y A4 ("inválida → aborta nombrando la clave") se rompe con el `host` hexadecimal (B2).
+
+### Checkpoints
+
+- C1: [x] están los archivos base y los docs; `./init.sh` termina con exit 0.
+- C2: [x] solo la feature 3 está en `in_progress`; `progress/current.md` describe la sesión.
+- C3: [x] solo hay paquetes previstos, sin `print()` en `src/`, sin cambios en `pyproject.toml` y sin secretos reales en los tests.
+- C4: [x] con la salvedad heredada (cobertura no medible hasta añadir `pytest-cov`). Sin red ni mocks de filesystem, y < 60 s. `make test-integration` no aplica.
+- C5: [ ] pendiente del cierre (entrada en `history.md` y estado `done`). `.claude/skills/` y `progress/fix_smoke_color.md` son del arnés.
+- C6: [x] no aplica (`sdd: false`).
+
+### Cambios requeridos
+
+1. B1: aceptar `os.PathLike` en `path` (`os.fspath`) y rechazar con `ValidationError` lo que no sea texto. Con tests, también por `load_or_exit`.
+2. B2: tratar como numérica la última etiqueta hexadecimal (`0[xX][0-9A-Fa-f]*`). Con tests y la fila de `docs/config.md` actualizada.
+3. Recomendados en la misma ronda (baratos): m14, m15, m16, m17, m18 y el truncado del hueco 2.
+
+### Para features futuras
+
+- **7 `agent_http_client`:** el host de `backend_url` no se valida sintácticamente (m9, ronda 6). Casos concretos aceptados hoy: `http://h h/`, `http://ｅxample.com/` (IDNA/NFKC), `http://h%0aINFO/` y, sobre todo, `http://good\.evil.com/`. `urlparse` toma `good\.evil.com` como host, pero un parser WHATWG lo lee como host `good` y path `/.evil.com`. Validar el host de la URL con la misma regla que `_bind_host` (IP o nombre DNS ASCII), o como mínimo rechazar `\` y `%` en el netloc, con un test que compruebe que el cliente HTTP conecta al host que valida `config`.
+- **9 `message_queue_layer`:** lo mismo para el host de `queue_url`.
+- **5 `backend_api_skeleton`:** lo que se recomendó en la ronda 7 sigue vigente: el error de `bind` nombra `host`/`port`. Además, si alguna vez se pasa la ruta de la config como `Path` desde el CLI, que haya un test de arranque con `Path` (B1 lo cubre a nivel de `config`).
+- **20 `structured_logging`:** sigue vigente lo de las rondas 6 y 7. Además, que el logger trunque los campos largos, porque los mensajes de `config` pueden llevar claves o rutas largas si no se aplica el hueco 2.
+- **25 `integration_test_suite` (o la CI):** probar con Python 3.9 real, incluida una versión anterior a 3.9.5 si se mantiene `>=3.9` (m18), y la rama `tomli`.
+
+## Ronda 9
+
+**Veredicto:** APPROVED
+
+Entrada: B1-B2 de "Decisiones pendientes tras la ronda 8", las decisiones del humano del 2026-10-08 (P1-P4) en `progress/questions_config_system.md` y "## Ronda 9" de `progress/impl_config_system.md`. Archivos revisados: `src/geoagent/common/config.py`, `tests/unit/test_config.py`, `docs/config.md` (y el cambio de arnés en `tests/unit/test_smoke.py`, `PYTHON_COLORS=0`, que no es de esta feature).
+
+### Evidencia ejecutada
+
+| Comando | Resultado |
+|---|---|
+| `make lint` | OK (`ruff check` limpio, 18 archivos formateados) |
+| `make test` | 152 passed, 2120 subtests, 2.51 s (Python 3.14.4) |
+| `./init.sh` | exit 0, "Entorno listo" (integración sin tests, exit 5 tolerado) |
+| Sondas a mano | `r9/probe.py` en el scratchpad: `Path`/`bytes`/`PathLike`, `GEOAGENT_CONFIG_FILE` vacío/espacios/`\t`/`\n`, 26 hosts contrastados con `getaddrinfo(AI_NUMERICHOST)`, `log_level` Unicode, 9 caracteres invisibles en secretos y usuario, 9 errores de TOML, rutas largas, `load_or_exit` |
+| Mutaciones propias | 28 mutaciones de `config.py` (`r9/mut.py`; copia en `r9/config.py.bak`, restaurado y comparado con `diff`: idéntico). Se detectan 27, sobrevive 1 equivalente |
+
+### Bloqueantes de la ronda 8
+
+- **B1 (`Path`):** [x] `_config_path` hace `os.fspath` y rechaza lo que no sea `str` con `field="config_file"` y sin eco. Sondas: `Path` válido carga con los dos loaders; `Path` inexistente da `file not found`; `bytes` y un `PathLike` que devuelve `bytes` dan `ValidationError`. Por `load_or_exit`: exit 2 y sin traceback (`test_non_text_paths_are_rejected_without_echo`). Mutaciones "sin `fspath`", "decodificar `bytes`" y "repetir `repr(path)`": detectadas.
+- **B2 (host hexadecimal):** [x] `0x7f`, `0X7F`, `0x7f.0x1`, `1.0x1`, `0x`, `0x7f.0`, `a.b.0x` y `0177.1` se rechazan (todos los que `getaddrinfo` lee como IPv4 numérica); `0xg`, `a.0x1g`, `0x7F.example`, `1e3` y `localhost` se aceptan. Las 6 variantes del regex (sin `X`, `+` en lugar de `*`, solo minúsculas, `match` en lugar de `fullmatch`, sobre la primera etiqueta, quitarlo) se detectan. `docs/config.md` actualizado.
+
+### Decisiones del humano
+
+- **P1 (ceros iniciales):** [x] El rechazo manual funciona también con un `ip_address` permisivo (mock de 3.9.0-3.9.4 en `TestBindHostPythonCompat`). Las 5 mutaciones (quitarlo, sin `rsplit(":")`, `len > 2`, cualquier `0`, solo el primer octeto) se detectan; las válidas `0.0.0.0`/`10.0.0.1` vigilan el exceso de celo.
+- **P2 (`GEOAGENT_CONFIG_FILE=""`):** [x] Definida y vacía (o `"  "`, `\t`, `\n`) da `config_file: config file path must not be empty`, también por `load_or_exit` (exit 2). Sin definir se cargan entorno + defaults. Un `path` explícito gana a la variable vacía. `docs/config.md:15-19` deja clara la diferencia. Mutaciones "`or None`/`env.get`", "sin `strip`", "quitar la comprobación" e "ignorar el `path` explícito": detectadas.
+- **P3 (`isprintable` en credenciales):** [x] BOM, NBSP, RLO, U+2028, surrogate, U+200B y soft hyphen se rechazan en `auth_token`, `api_token`, `queue_password` y `queue_username`, sin repetir el valor; espacio ASCII y `ñandú` siguen siendo válidos. Las mutaciones "solo `Cc`" (72 fallos) y "repetir el valor" (84) se detectan.
+- **P4:** [x] truncado (ruta, clave desconocida, texto de `TOMLDecodeError`): las mutaciones que quitan `_clip` en cada sitio, suben `_MAX_ECHO` o conservan el final se detectan. [x] m14: `ınfo`/`ıNFO` rechazados; quitar `isascii` lo detectan 16 tests. [x] m15: `nul_in_path` en `_PATH_BRANCHES`; repetir la ruta con el NUL lo detectan 40 tests. [x] m17: corregido en `progress/impl_config_system.md:161`.
+
+### Ningún mensaje repite secretos ni caracteres de control
+
+Revisadas todas las ramas que construyen mensajes: `_describe` (solo ASCII imprimible, truncado), `_plain_str`/`_fs_path`/`_bind_host`/URLs (sin eco), `_config_path` (sin eco), `_shown_path` (imprimible y truncada, o genérica), clave desconocida (solo `[A-Za-z0-9_.-]`, truncada), `TOMLDecodeError` (solo si es imprimible, truncado). Todas las sondas producen una sola línea imprimible.
+
+### Mutación superviviente (equivalente)
+
+- Quitar `if detail.isprintable()` en la rama `TOMLDecodeError`: ningún test lo detecta porque `tomllib`/`tomli` siempre formatean los caracteres y las claves con `repr` (sondas con `\x01`, `\x7f`, U+2028 en clave y en valor: todos los mensajes son imprimibles). Es una defensa ante un cambio de la librería; se puede mantener sin test.
+
+### Valoración de las dudas del implementer
+
+1. **El texto de `TOMLDecodeError` pierde la posición:** confirmado y es **la duda más relevante**. Con 40 caracteres, los errores de sintaxis más habituales quedan sin línea: `Cannot overwrite a value (at line 2, col…`, `Illegal character '\x01' (at line 1, col…`. En `HEAD` se mostraba entera. Es lo que decidió el humano (P4), así que no bloquea, pero recomiendo (m19) conservar el sufijo `(at line L, column C)`: separarlo con `re.search(r" \(at line \d+, column \d+\)$", detail)` (o `end of document`), truncar solo lo anterior y añadirlo después. El sufijo solo tiene dígitos, así que no reabre el riesgo. Conviene que el leader se lo plantee al humano antes de cerrar.
+2. **La ruta se trunca por el principio:** confirmado (`file not found: /tmp/tmpqvxht3yv/ddddddddddddddddddddddd…` pierde `cfg.toml`). Menor (m20): para una ruta, el final (`…` + últimos 40 caracteres) identifica mejor el archivo. La mutación "conservar el final" falla 22 tests, así que el cambio necesitaría ajustar `test_long_path_is_truncated`. Opcional.
+3. **Ruta de solo espacios tratada como vacía:** aceptable, sin cambios. Es coherente con `_non_empty` y un archivo llamado `" "` no es un caso real. Una ruta con espacios a los extremos (`" ok.toml"`) no se recorta y se usa tal cual, que es lo correcto.
+
+### Observaciones menores (no bloquean)
+
+- m19. Posición de los errores de TOML (duda 1, arriba).
+- m20. Truncar la ruta conservando el final (duda 2, arriba).
+- m21. `docs/config.md:30,33` (`store_path`, `db_path`) enumera "sin caracteres de control, separadores de línea, RLO ni surrogates", mientras que las credenciales (líneas 27, 34, 36, 37) añaden BOM y NBSP. Los dos usan `isprintable()`, que también rechaza BOM y NBSP en rutas (D3). Unificar el paréntesis para no sugerir que en las rutas se aceptan.
+- m22. Un `os.PathLike` cuyo `__fspath__` lanza algo distinto de `TypeError` (sonda: `ValueError`) sale sin tipar. Es un objeto defectuoso del llamante, no una entrada del usuario: sin cambios.
+
+### Acceptance de la feature 3
+
+- A1-A6: [x]. Las salvedades de la ronda 8 (A1 con `Path`, A4 con host hexadecimal) quedan resueltas.
+
+### Checkpoints
+
+- C1: [x] están los archivos base y los docs; `./init.sh` termina con exit 0.
+- C2: [x] solo la feature 3 está en `in_progress`; `progress/current.md` describe la sesión.
+- C3: [x] sin paquetes nuevos, sin `print()` en `src/`, `pyproject.toml` sin cambios, sin secretos reales en los tests.
+- C4: [x] con la salvedad heredada (cobertura no medible hasta añadir `pytest-cov`). Sin red; el único mock nuevo es `ipaddress.ip_address` (compatibilidad de versión), no de filesystem. < 60 s. `make test-integration` no aplica.
+- C5: [ ] pendiente del cierre (entrada en `history.md` y estado `done`, que hace el leader). `.claude/skills/`, `AGENTS.md`, `tests/unit/test_smoke.py` y `progress/fix_smoke_color.md` son cambios del arnés.
+- C6: [x] no aplica (`sdd: false`).
+
+### Cambios requeridos
+
+Ninguno bloqueante. Recomendado antes de cerrar (decisión del humano): m19. Opcionales: m20, m21.
+
+### Para features futuras
+
+- Siguen vigentes los de la ronda 8 (features 5, 7, 9, 20 y 25), que el leader pasa a `progress/current.md` al cerrar.
+- **20 `structured_logging`:** si el logger trunca campos (recomendación de la ronda 8), usar el mismo criterio que `config` (`_clip`, 40 + `…`) o uno común en `geoagent.common`, y decidir si las rutas se truncan por el final (m20).
+- **25 `integration_test_suite` (o la CI):** el rechazo de ceros iniciales (P1) solo se prueba con un mock de `ipaddress`; si la CI incluye un Python 3.9.0-3.9.4 real, añadir allí `GEOAGENT_HOST=010.0.0.1` como prueba de humo.
+
+## Ronda 10
+
+**Veredicto:** APPROVED
+
+Entrada: m19, m20 y m21 de "Decisiones del humano tras la ronda 9 del reviewer (2026-10-08)" en `progress/questions_config_system.md` y "## Ronda 10" de `progress/impl_config_system.md`. Delta revisado: `_TOML_POSITION_RE`, `_clip_toml_error`, `_clip_tail` y `_shown_path` en `src/geoagent/common/config.py`; los tests `test_long_path_is_truncated`, `test_long_toml_syntax_error_keeps_position`, `test_short_toml_syntax_error_shows_line` y `test_toml_position_suffix_is_strict` en `tests/unit/test_config.py`; `docs/config.md`.
+
+### Evidencia ejecutada
+
+| Comando | Resultado |
+|---|---|
+| `make lint` | OK (`ruff check` limpio, 18 archivos formateados) |
+| `make test` | 155 passed, 2131 subtests (Python 3.14); igual con `FORCE_COLOR=3` |
+| `./init.sh` | exit 0 (integración sin tests, exit 5 tolerado) |
+| Sondas | `r10/probe.py` en el scratchpad: 12 TOML con sufijos falsos en claves y valores, rutas largas, `load_or_exit`, 8 entradas directas a `_clip_toml_error` |
+| Mutaciones | 18 mutaciones del delta (`r10/mut.py`; copia en `r10/config.py.bak`, restaurado y comparado con `diff`: idéntico). Se detectan 15; sobreviven 3, todas inofensivas (ver abajo) |
+
+### m19: el sufijo de posición se conserva y su patrón es estricto
+
+[x] `_clip_toml_error` trunca solo el texto anterior y añade el sufijo tal cual. Ejemplos reales: `Cannot overwrite a value (at line 2, column 6)`, `Invalid value (at end of document)`, `Cannot declare ('sss…… (at line 2, column 226)`.
+
+[x] El patrón no puede repetir caracteres de control ni secretos: `re.ASCII`, `[0-9]+`, texto fijo y anclado con `\Z`, que no admite un `\n` al final como `$`. Sondas con sufijos falsos inyectados:
+- En claves de tabla duplicadas: `"k (at line 9, column 9)"`, `"x\n (at line 1, column 1)"`, `"SECRET\x01 (at …)"`, `"a INFO fake (at …)"` y una clave de 200 caracteres. `tomllib` muestra la clave con `repr`, así que el sufijo falso queda dentro del texto, que se trunca. El sufijo que se conserva es siempre el real, al final y solo con dígitos. Todos los mensajes son imprimibles y de una línea.
+- En valores: `"tok (at line 5, column 5)` sin cerrar y `"\q (at …)"`. `tomllib` no repite el valor, solo la posición real.
+- Directas: un sufijo con `\n` dentro o al final, un dígito `٣`, `x` o texto detrás se truncan enteros (`test_toml_position_suffix_is_strict`). Con varios sufijos seguidos, o un número de línea enorme, se conserva solo texto fijo y dígitos, sin riesgo.
+
+[x] Mutaciones detectadas: recortar todo con `_clip`, `\Z` → `$`, quitar el ancla, `\d` sin `re.ASCII`, dígitos → `.+` y → `[^)]+`, quitar `end of document`, aceptar solo `col`, no truncar el texto anterior y usar `_clip` en `_read_file`.
+
+### m20: la ruta conserva el final
+
+[x] `_clip_tail` devuelve `…` + los últimos 40 caracteres: `file not found: …dddddddddddddddddddd/my-real-config.toml`, también en `invalid TOML in …` y por `load_or_exit` (exit 2, una línea). `_shown_path` sigue comprobando `isprintable()` sobre la ruta **completa** antes de recortarla. Por eso un `\n` en cualquier punto da `<path with non-printable characters>` (sonda `a\nINFO fake…`), y el final mostrado no puede tener caracteres de control. En `str` no hay pares surrogate que se puedan partir. Un acento combinante al principio del recorte sigue siendo imprimible.
+
+[x] Mutaciones detectadas (20 tests cada una): volver a recortar por el principio, quitar `…`, recortar un carácter de más, no truncar y quitar la comprobación de `isprintable` (100 tests).
+
+### m21: docs coherentes con el código
+
+[x] En `docs/config.md`, las filas `store_path`/`db_path` dicen lo mismo que las credenciales (BOM, NBSP, `isprintable()`), igual que `_fs_path` y `_plain_str`. El párrafo de truncado describe el recorte por el final de las rutas y el sufijo de posición limitado a dígitos. Coincide con el código.
+
+### Mutaciones supervivientes
+
+- Usar `detail[match.start():]` en lugar de `match.group()`: es equivalente, porque con `\Z` las dos dan lo mismo.
+- Quitar `if detail.isprintable()`: ya estaba en la ronda 9. Es una defensa ante cambios de la librería; ninguna entrada real la activa.
+- Aceptar solo `column` (quitar `col(?:umn)?`): sobrevive. `tomllib` (3.14) y `tomli>=2.0` siempre escriben `column`, así que la alternativa `col` no se usa y ningún test la cubre. Como solo acepta texto fijo, no supone ningún riesgo (m23, opcional).
+
+### Regresiones
+
+Ninguna. Los 155 tests pasan, incluidos `test_long_toml_error_text_is_truncated`, `test_printable_path_is_still_shown` y las ramas de `_PATH_BRANCHES` con ruta no imprimible y con NUL.
+
+### Observaciones menores (no bloquean)
+
+- m23. Quitar `col(?:umn)?` de `_TOML_POSITION_RE` y de las regex de los tests, o añadir una fila con `col` en `test_toml_position_suffix_is_strict`. Ahora mismo es una alternativa que nunca se usa. Opcional.
+
+### Checkpoints
+
+- C1: [x] `./init.sh` termina con exit 0.
+- C2: [x] solo la feature 3 está en `in_progress`.
+- C3: [x] sin paquetes nuevos ni `print()` en `src/`, sin secretos reales.
+- C4: [x] tests deterministas y sin red, < 60 s. `make test-integration` no aplica. Sigue la salvedad de que la cobertura no se puede medir.
+- C5: [ ] pendiente del cierre (`history.md` y estado `done`, que hace el leader).
+- C6: [x] no aplica (`sdd: false`).
+
+### Cambios requeridos
+
+Ninguno.
+
+### Para features futuras
+
+Nada nuevo. Siguen vigentes las notas de las rondas 8 y 9 (features 5, 7, 9, 20 y 25). Para la 20 `structured_logging`, el criterio de truncado ya está fijado: `_clip` (por el principio) para valores y claves, `_clip_tail` (por el final) para rutas.
+
+## Ronda 11
+
+**Veredicto:** APPROVED
+
+Delta mínimo sobre la ronda 10 (m23, decisión del humano del 2026-10-08).
+
+- `_TOML_POSITION_RE` (`src/geoagent/common/config.py:51-53`) acepta solo `line N, column M` o
+  `end of document`; no queda alternativa `col` en `src/` ni en las regex de los tests.
+- `test_toml_position_suffix_is_strict`: nueva fila `" (at line 2, col 3)"` que exige truncado sin
+  sufijo. Mutación `col(?:umn)?` aplicada en una copia en el scratchpad: el subTest de esa fila
+  falla (`... (at line 2, col 3)' != '...…'`); sin la mutación, pasa (6 subtests).
+- Sin regresiones: `make lint` (ruff check + format) limpio; `make test` 155 passed, 2132 subtests;
+  `./init.sh` exit 0. `docs/config.md` ya documentaba `column`.
+
+### Checkpoints
+Sin cambios respecto a la ronda 10 (todos en verde).
+
+### Recordatorio
+Según la decisión del humano, la feature no se cierra sin su revisión completa del código y
+autorización expresa.
+
+## Ronda 12
+
+**Veredicto:** CHANGES_REQUESTED
+
+Revisa la ronda 12 del implementer (puntos 17-22 de "Sesión de preguntas: revisión del código
+antes del cierre", decisiones del humano del 2026-10-11). Solo cambia `tests/unit/test_config.py`.
+
+### Comprobaciones previas
+- `src/` sin cambios: `md5sum src/geoagent/common/config.py` = `2ea300bb…` (igual que el md5
+  tomado antes de la ronda 12 y que la copia de seguridad del implementer); `git diff --stat src/`
+  sigue en 146 inserciones / 23 borrados; m23 (`column` estricto) intacto.
+- Cambio manual del humano respetado: `("u\udcffp", None)` está en `_CONTROL_CHARS`
+  (`tests/unit/test_config.py:254`) y `_CONTROL_CHARS_ENV_ONLY` (l. 256) ya no lo añade aparte.
+- `make lint` exit 0; `make test` 155 passed, 2142 subtests; `./init.sh` exit 0.
+
+### Puntos 18-22 (correctos)
+- **18:** `_config_file_args` es función de módulo (l. 68-70) y se usa en `TestValidation`
+  (`test_missing_file`, `test_invalid_toml`, `test_unreadable_files_raise_validation_error`), en las
+  4 apariciones de `TestUntrustedNamesInErrors` y en `test_secret_in_file_is_rejected`. No queda
+  ningún `if via_env` ni la expresión repetida (solo `test_file_path_from_env`, que es a propósito
+  solo por variable).
+- **19:** `load_or_exit(loader, arg, env=env)` (l. 896); 0 apariciones de `…`, 7 de `…`.
+- **20:** dos filas `(url, mostrado)` con `_assert_shown`: `amqp://h/?{MASK}` y
+  `amqp://h/?a={MASK}&{MASK}`.
+- **21:** bucle `via_env` con el helper.
+- **22:** tuplas `(loader, key, expected)`.
+
+### Punto 3: cobertura
+Comparación de identidades de subtest (parche de `TestCase.subTest` que registra los parámetros,
+rutas temporales normalizadas) entre la versión anterior (copia del 2026-10-10 en el scratchpad,
+con el duplicado del surrogate quitado como hizo el humano: 1893 subtests en `test_config.py`, es
+decir, 2136 en total) y la actual (1899, es decir, 2142): **conjuntos idénticos salvo** +2 de
+`test_non_utf8_file_via_load_or_exit_exits_2` (`via_env`) y +4 de
+`test_valueless_query_item_is_masked` (fila mixta). Ninguna fila de las tablas se ha eliminado ni
+alterado (las tablas pasan a `(env, toml, motivo)` con los mismos `(env, toml)`).
+
+### Punto 17: motivo → test (mutación en copia de `src/` en el scratchpad, `PYTHONPATH` verificado)
+Se mutaron **los 36 textos** de motivo uno a uno; "fallos" = subtests que fallan.
+
+| Línea | Motivo | Test que lo comprueba | Fallos con mutación |
+|---|---|---|---|
+| 84 | `must be an integer` (bool) | `test_invalid_values_are_rejected_naming_the_key` (TOML `true`) | 2 |
+| 94 | `must be an integer (got …)` | ídem | 42 |
+| 99 | `must be a number` (bool) | ídem | 3 |
+| 112 | `must be a number (got …)` | ídem | 39 |
+| 118 | `must be a finite number` | ídem | 30 |
+| 124 | `must be a string` | ídem | 48 |
+| 132 | `must be printable text…` (`_plain_str`) | ídem | 86 |
+| 139 | `must be greater than 0` (int) | ídem | 4 |
+| 146 | `must be greater than 0` (float) | ídem | 12 |
+| 153 | `must be between 1 and 65535` | ídem | 8 |
+| 160 | `must not be empty` | ídem | 28 |
+| 168 | `must be printable text…` (`_fs_path`) | ídem | 30 |
+| 175 | `must be an IP address or a valid host name` | ídem | 103 |
+| 207 | `must not contain ';' …` | ídem | 56 |
+| 216 | `must be a valid URL` (ValueError) | ídem | 48 |
+| 218 | `must be a valid URL` (puerto 0) | ídem (`h:0/s3cr3t`) | 6 |
+| 225 | `must be a valid URL` (controles) | ídem | 21 |
+| 233 | `must be an http(s) URL with a host` | ídem | 8 |
+| 235 | `must not embed credentials; use auth_token` | ídem | 10 |
+| 237 | `must not contain a query or fragment` | ídem | 12 |
+| 247 | `must be a URL with scheme and host` | ídem | 12 |
+| 250 | `… use queue_username and queue_password` | ídem | 24 |
+| 253 | `must not contain a fragment` | ídem | 8 |
+| 263 | `must be one of …` | ídem | 12 |
+| 387 | `config file path must be a string or a path` | `test_non_text_paths_are_rejected_without_echo` | 10 |
+| 389 | `config file path must not be empty` | `test_empty_path_argument_is_an_error`, `test_empty_env_variable_…` | 8 |
+| 401 | `file not found` | `test_missing_file`, `test_missing_pathlib_path_names_config_file` | 6 |
+| 404 | `cannot read …` | **ninguno** | **0** |
+| 409 | `invalid TOML in` | `test_invalid_toml`, `test_long_toml_error_text_is_truncated` | 8 |
+| 411 | `is not valid UTF-8` | `test_unreadable_files_raise_validation_error` | 4 |
+| 413 | `invalid config file path` | ídem | 4 |
+| 415 | `nested too deeply` | ídem | 4 |
+| 430 | `unknown configuration key` (clave simple) | **ninguno** | **0** |
+| 432 | `… (name has unsupported characters)` | **ninguno** (solo se comprueba el prefijo común) | **0** |
+| 437 | `secrets must not be stored in the config file; set …` | **ninguno** | **0** |
+| 452 | `(default)` | `test_invalid_default_is_rejected_naming_the_key` | 3 |
+
+(l. 395, `TOML support requires the 'tomli' package`, es `pragma: no cover` y no aplica.)
+
+Cada fila de las tablas espera el motivo de su rama real: todas pasan con el `src/` actual y cada
+mutación de una rama concreta hace fallar solo las filas de esa rama (incluidas las tres de
+`must be a valid URL` por separado, la ordenación http/amqp de `;` frente a query, y los dos
+`must be greater than 0`). No hay motivos genéricos que pasen por casualidad: ningún `R_*` es
+subcadena de otro motivo que pueda dar la misma fila.
+
+### Bloqueantes
+1. **`cannot read` (`_read_file`, l. 404) sin comprobar.** Está dentro del alcance explícito
+   (motivos de `_read_file`) y el humano pidió "todos los motivos". La rama ya se ejercita
+   (`_PATH_BRANCHES["cannot_read"]`, un directorio), pero ningún test hace `assertIn`. Añadir
+   p. ej. un caso `"directory": (tmp, "cannot read")` en `test_unreadable_files_raise_validation_error`
+   (sin comprobar el `strerror`, que depende del sistema).
+2. **Motivos de `_resolve` sin comprobar** (también "motivos de rechazo"; alcance completo según el
+   humano):
+   - l. 430 `unknown configuration key`: `test_unknown_file_key` y `test_plain_unknown_key_is_named`
+     solo miran `field`/la clave; añadir `assertIn("unknown configuration key", ...)`.
+   - l. 432 `(name has unsupported characters)`: `test_unknown_key_is_repeated_only_if_plain`
+     solo comprueba el prefijo, que comparte con l. 430; añadir `assertIn("unsupported characters", ...)`.
+   - l. 437 `secrets must not be stored in the config file; set GEOAGENT_<KEY>`:
+     `test_secret_in_file_is_rejected` solo mira `field` y que no repite el valor; añadir
+     `assertIn("must not be stored in the config file", ...)` (y, si se quiere, `f"set GEOAGENT_{key.upper()}"`).
+   Repetir las mutaciones de estas 4 líneas tras el cambio: cada una debe hacer fallar algún test.
+
+### Observaciones menores (no bloquean)
+- La copia en `/tmp/.../scratchpad/` que usé como "antes" es la del implementer del 2026-10-10
+  menos el duplicado del surrogate; coincide en número (2136) con lo anotado por el leader.
+
+### Checkpoints
+Sin cambios respecto a la ronda 11 (todos en verde); el bloqueo es solo de cobertura del punto 17.
+
+### Recordatorio
+La feature no se cierra sin la autorización expresa del humano tras un APPROVED.
+
+## Ronda 13
+
+**Veredicto:** APPROVED
+
+Revisa la ronda 13 del implementer, que responde a los bloqueantes 1 y 2 de la ronda 12. Solo
+cambia `tests/unit/test_config.py`.
+
+### Comprobaciones previas
+- `src/` sin cambios: `md5sum src/geoagent/common/config.py` = `2ea300bb…` (el mismo que en la
+  ronda 12); `git diff --stat src/` sigue en 146 inserciones / 23 borrados.
+- `make lint` exit 0 (ruff check y format OK); `make test` 155 passed, 2146 subtests; `./init.sh`
+  exit 0.
+
+### Bloqueantes de la ronda 12 (resueltos)
+- **1. l. 404 `cannot read`:** caso `"directory": (tmp, R_CANNOT_READ)` en
+  `test_unreadable_files_raise_validation_error` (l. 637). `R_CANNOT_READ = "cannot read "` no
+  comprueba el `strerror`, que depende del sistema operativo. Un directorio da `OSError` en Linux
+  (`IsADirectoryError`) y en Windows (`PermissionError`), así que entra en esta rama y no en la de
+  `FileNotFoundError`.
+- **2. l. 430 / 432:** `test_unknown_file_key` (l. 597-598) y `test_plain_unknown_key_is_named`
+  (l. 991-992) hacen `assertIn(R_UNKNOWN_KEY)` y `assertNotIn(R_UNSUPPORTED_CHARS)`;
+  `test_unknown_key_is_repeated_only_if_plain` (l. 870-871) hace `assertIn` de los dos. Cada
+  rama se distingue de la otra en las dos direcciones.
+- **2. l. 437:** `test_secret_in_file_is_rejected` (l. 1223-1224) comprueba
+  `secrets must not be stored in the config file` y `set GEOAGENT_{key.upper()}`.
+
+### Punto 1: mutaciones de los 4 motivos
+Las hice en una copia nueva de `src/` en el scratchpad (`r13/mut/src`). Con `PYTHONPATH`
+apuntando a la copia, `geoagent.common.config.__file__` resuelve a esa copia. Lancé los tests del
+repo contra cada mutación por separado; "fallos" son subtests que fallan.
+
+| Línea | Mutación | Fallos | Tests que fallan |
+|---|---|---|---|
+| 404 | `cannot read` -> `unable to read` | 4 | `test_unreadable_files_raise_validation_error` |
+| 430 | `"unknown configuration key"` -> `"unexpected key"` | 10 | `test_unknown_file_key`, `test_plain_unknown_key_is_named` |
+| 432 | sin el sufijo `(name has unsupported characters)` | 14 | `test_unknown_key_is_repeated_only_if_plain` |
+| 432 | prefijo `unknown configuration key (name` -> `unexpected key (name` | 14 | ídem |
+| 437 | `secrets must not be stored in the config file` -> `no secrets in the file` | 8 | `test_secret_in_file_is_rejected` |
+| 437 | `; set {ENV_PREFIX}` -> `; use {ENV_PREFIX}` | 8 | ídem |
+| 437 | `{key.upper()}` -> `{key}` | 8 | ídem |
+
+Cada mutación hace fallar solo los tests de su rama. Las tres últimas mutaciones de la tabla
+(prefijo de 432, `set` y `key.upper()` de 437) son mías y van más allá de lo que pedía la ronda 12.
+
+### Punto 2: tabla completa motivo -> test (36 textos)
+Repetí las 36 mutaciones de la tabla de la ronda 12 contra los tests de la ronda 13. **Todas hacen
+fallar al menos un test.** Las 32 líneas que ya estaban cubiertas dan los mismos números que en la
+ronda 12. Las cuatro líneas que antes daban 0 fallos ahora dan:
+
+| Línea | Ronda 12 | Ronda 13 |
+|---|---|---|
+| 404 | 0 | 4 |
+| 430 | 0 | 10 |
+| 432 | 0 | 14 |
+| 437 | 0 | 8 |
+
+Ya no queda ningún motivo de rechazo sin comprobar (l. 395 sigue con `pragma: no cover`).
+
+### Punto 3: cobertura (2142 -> 2146)
+Comparé las identidades de los subtests de `test_config.py` con el mismo registrador que en la
+ronda 12, que parchea `TestCase.subTest` y normaliza las rutas temporales. Pasa de 1899 a 1903 y
+la diferencia es exactamente **+4**:
+`test_unreadable_files_raise_validation_error` con `case='directory'` × 2 loaders × `via_env` en
+{False, True}. Todos los subtests de la ronda 12 siguen ahí con los mismos parámetros. No se ha
+perdido ninguno.
+
+### Observaciones menores (no bloquean)
+- `test_secret_in_file_is_rejected` escribe `GEOAGENT_` literal en vez de `ENV_PREFIX`. Es
+  deliberado y aceptable: así un cambio accidental del prefijo también rompe el test.
+- En el scratchpad del implementer, `mut/src/geoagent/common/config.py` se quedó con la mutación
+  `nope; set …` de l. 437 sin restaurar. Solo afecta a la copia; el `src/` real está intacto (md5
+  verificado). Conviene restaurar las copias de trabajo al terminar para no confundir rondas
+  posteriores.
+
+### Checkpoints
+Sin cambios respecto a la ronda 11: todos en verde. Ya no queda pendiente el bloqueo de cobertura
+del punto 17.
+
+### Recordatorio
+La feature no se cierra sin la autorización expresa del humano tras este APPROVED.
