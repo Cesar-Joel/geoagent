@@ -110,6 +110,13 @@
   del PR lo cubre en parte. Origen: m10 de la ronda 6 y "Para features futuras" de las rondas
   8 y 9 de `progress/review_config_system.md`.
 
+### Sin feature asignada
+
+- Homogeneizar el idioma del proyecto: decidir si `README.md`, `docs/`, `specs/`, `progress/` y
+  `AGENTS.md` pasan al inglés (son visibles en el repo) y si se traducen los commits y PR
+  anteriores al 2026-10-11, que están en español. Desde esa fecha, los commits y los PR van en
+  inglés. Origen: decisión del humano del 2026-10-11 ("Idioma" en `docs/conventions.md`).
+
 ## Próximo paso
 
 Siguiente feature `pending`: 4 `agent_local_store` (`"sdd": true` → `spec_author`).

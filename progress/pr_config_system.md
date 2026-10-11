@@ -1,93 +1,91 @@
 # Borrador del PR: feature 3 `config_system`
 
 > Borrador para el humano, que es quien hace el push y abre el PR. Se borra cuando el PR
-> esté abierto.
+> esté abierto. El título y la descripción van en inglés (ver "Idioma" en
+> `docs/conventions.md`).
 
 **Rama:** `feat/3-config_system` → `main`
 
 **Título:**
 
 ```
-feat(common): configuración por capas con validación temprana y secretos enmascarados (#3)
+feat(common): layered configuration with early validation and masked secrets (#3)
 ```
 
 **Descripción:**
 
 ```markdown
-## Qué hace
+## What it does
 
-Añade `src/geoagent/common/config.py`, la configuración de agente y backend:
+Adds `src/geoagent/common/config.py`, the configuration for the agent and the backend:
 
-- `load_agent_config()` y `load_backend_config()`: **entorno (`GEOAGENT_*`) > archivo TOML >
-  valores por defecto**. Los valores por defecto pasan por el mismo validador (si uno es
-  inválido, el error lo marca con `(default)`).
-- `load_or_exit()`: para los puntos de entrada. Escribe `invalid configuration: <clave>: <motivo>`
-  en una sola línea de `stderr` y sale con código 2, sin traceback.
-- Dataclasses inmutables `AgentConfig` y `BackendConfig`. `repr()`, `str()` y `to_safe_dict()`
-  enmascaran los secretos (`auth_token`, `api_token`, `queue_password`) y los valores de la query
-  de `queue_url`.
+- `load_agent_config()` and `load_backend_config()`: **environment (`GEOAGENT_*`) > TOML file >
+  defaults**. Defaults go through the same validator (an invalid default is reported with
+  `(default)`).
+- `load_or_exit()` for entry points: writes `invalid configuration: <key>: <reason>` as a single
+  line on `stderr` and exits with code 2, no traceback.
+- Immutable `AgentConfig` and `BackendConfig` dataclasses. `repr()`, `str()` and
+  `to_safe_dict()` mask the secrets (`auth_token`, `api_token`, `queue_password`) and the query
+  values of `queue_url`.
 
-Mapa de claves, variables y reglas de validación en `docs/config.md`.
+Keys, environment variables and validation rules are listed in `docs/config.md`.
 
-## Validación
+## Validation
 
-- **Secretos:** solo por variable de entorno. En el TOML se rechazan y el error indica qué
-  variable usar.
-- **URL:** sin credenciales embebidas ni fragmento, y sin `;` en el host ni en el path (`%3B`
-  sí). `backend_url` rechaza además la query y exige http(s). Puerto entre 1 y 65535.
-- **`host` del backend:** una IP sin corchetes ni zona, o un nombre DNS válido. Se rechazan
-  las formas ambiguas que el sistema resolvería a otra IP (`127.1`, `0x7f.0x1`, `010.0.0.1`),
-  incluso con el `ipaddress` permisivo de Python 3.9.0-3.9.4 (CVE-2021-29921).
-- **Números:** solo dígitos ASCII (sin `_` ni dígitos Unicode), finitos y mayores que 0.
-- **Texto, rutas y secretos:** imprimibles (`str.isprintable()`): sin caracteres de control,
-  BOM, NBSP, RLO ni separadores de línea.
-- **Archivo:** `str` u `os.PathLike`. Errores tipados para un archivo inexistente, un
-  directorio, TOML inválido, un archivo que no es UTF-8, anidamiento excesivo o un NUL en la ruta.
-  `GEOAGENT_CONFIG_FILE` definida pero vacía es un error. Sin definir, se carga entorno + valores
-  por defecto.
+- **Secrets:** environment only. A secret in the TOML file is rejected, and the error names the
+  variable to use instead.
+- **URLs:** no embedded credentials, no fragment, and no `;` in the host or path (`%3B` is
+  fine). `backend_url` also rejects a query and requires http(s). Port between 1 and 65535.
+- **Backend `host`:** an IP address without brackets or zone, or a valid DNS name. Ambiguous
+  forms that the system would resolve to another address (`127.1`, `0x7f.0x1`, `010.0.0.1`) are
+  rejected, even with the lenient `ipaddress` of Python 3.9.0-3.9.4 (CVE-2021-29921).
+- **Numbers:** ASCII digits only (no `_`, no Unicode digits), finite and greater than 0.
+- **Text, paths and secrets:** printable only (`str.isprintable()`): no control characters,
+  BOM, NBSP, RLO or line separators.
+- **Config file:** `str` or `os.PathLike`. Typed errors for a missing file, a directory, invalid
+  TOML, non-UTF-8 content, excessive nesting or a NUL in the path. `GEOAGENT_CONFIG_FILE` set but
+  empty is an error; unset, the environment and defaults are loaded.
 
-## Errores sin fugas
+## Errors that do not leak
 
-Ningún error repite un valor que pueda ser secreto. Los numéricos repiten el valor solo si es
-ASCII imprimible, y truncado a 40 caracteres. La ruta del archivo y las claves TOML desconocidas
-se muestran solo si son imprimibles, así que un nombre con `\n` no puede falsificar una línea de
-log. Las rutas largas se truncan por el principio, para que se vea el nombre del archivo. Los
-errores de TOML conservan `(at line L, column C)`.
+No error repeats a value that may be a secret. Numeric errors repeat the value only if it is
+printable ASCII, truncated to 40 characters. The config file path and unknown TOML keys are
+shown only if printable, so a name containing `\n` cannot forge a log line. Long paths are
+truncated from the start so the file name stays visible. TOML errors keep
+`(at line L, column C)`.
 
 ## Tests
 
-`tests/unit/test_config.py`: **155 passed, 2146 subtests** (toda la suite unitaria).
+`tests/unit/test_config.py`: **155 passed, 2146 subtests** (whole unit suite).
 
-- Una tabla de casos válidos e inválidos por tipo de validación. Cada fila se prueba en los dos
-  loaders y desde las dos fuentes, y comprueba el valor y el tipo exacto, la clave nombrada, el
-  **motivo** del rechazo y que el error no repite el valor.
-- `test_every_field_is_classified` falla si un campo nuevo de las dataclasses no está en las
-  tablas.
-- Mutaciones: cambiar cualquiera de los 36 textos de motivo de `config.py` hace fallar algún
-  test.
+- One table of valid and invalid cases per validation type. Every row runs against both
+  loaders and both sources, and checks the exact value and type, the key named in the error,
+  the **rejection reason** and that the value is not echoed.
+- `test_every_field_is_classified` fails if a new dataclass field is missing from the tables.
+- Mutation-checked: changing any of the 36 reason messages in `config.py` makes a test fail.
 
-`make lint test` y `./init.sh` en verde.
+`make lint test` and `./init.sh` pass.
 
-## Otros cambios en la rama
+## Other changes on this branch
 
-- `fix(tests)`: `tests/unit/test_smoke.py` fija `PYTHON_COLORS=0` en `TestEntryPoints`. Con
-  `FORCE_COLOR` definido, Python 3.14 colorea el `usage` de `argparse` aunque la salida sea un
-  `StringIO`, y dos subtests fallaban según el entorno (`progress/fix_smoke_color.md`).
-- `chore(harness)`: "Notas para features futuras" persistentes (`AGENTS.md` §5 bis), Python 3.9
-  en local (`docs/verification.md`) y las skills `sesion-preguntas` y `pausar-sesion`.
-- `chore(progress)`: cierre de la sesión de la feature 2.
+- `fix(tests)`: `tests/unit/test_smoke.py` sets `PYTHON_COLORS=0` in `TestEntryPoints`. With
+  `FORCE_COLOR` set, Python 3.14 colors the `argparse` usage even when writing to a `StringIO`,
+  so two subtests failed depending on the environment (`progress/fix_smoke_color.md`).
+- `chore(harness)`: persistent "Notas para features futuras" (`AGENTS.md` §5 bis), Python 3.9
+  locally (`docs/verification.md`), and the `sesion-preguntas` and `pausar-sesion` skills.
+- `chore(progress)`: closes the feature 2 session.
 
-## Proceso
+## Process
 
-Trece rondas de implementer y reviewer, con tres sesiones de preguntas del humano. Detalle en
-`progress/impl_config_system.md`, `progress/review_config_system.md` y
-`progress/questions_config_system.md`. Las recomendaciones para otras features (5, 7, 9, 11, 19,
-20, 24 y 25) están en "Notas para features futuras" de `progress/current.md`.
+Thirteen implementer/reviewer rounds, with three Q&A sessions with the human. Details in
+`progress/impl_config_system.md`, `progress/review_config_system.md` and
+`progress/questions_config_system.md` (in Spanish). Recommendations for other features (5, 7, 9,
+11, 19, 20, 24 and 25) are under "Notas para features futuras" in `progress/current.md`.
 
-## Pendiente fuera de este PR
+## Out of scope
 
-- Confirmar la rama `tomli` y el comportamiento de los puertos con un Python 3.9 real. La
-  matriz 3.9 de la CI lo cubre en parte. Nota en la feature 25.
+- Confirming the `tomli` branch and port parsing on a real Python 3.9. The CI 3.9 matrix
+  covers part of it. Tracked as a note for feature 25.
 
 Refs: feature #3
 
