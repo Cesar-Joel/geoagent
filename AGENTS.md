@@ -20,7 +20,7 @@
 | Archivo / carpeta            | Qué contiene                                                                | Cuándo leerlo |
 |------------------------------|-----------------------------------------------------------------------------|---------------|
 | `feature_list.json`          | Lista de tareas con estado (`pending` / `spec_ready` / `in_progress` / `done` / `blocked`) | Siempre, al empezar |
-| `progress/current.md`        | Estado de la sesión actual                                                  | Siempre, al empezar |
+| `progress/current.md`        | Estado de la sesión actual + notas persistentes para features futuras      | Siempre, al empezar |
 | `progress/history.md`        | Bitácora append-only de sesiones anteriores                                 | Si necesitas contexto histórico |
 | `specs/<feature>/`           | `requirements.md` + `design.md` + `tasks.md` (Kiro-style)                   | Antes de implementar cualquier feature con `"sdd": true` |
 | `docs/architecture.md`       | Qué significa "hacer un buen trabajo" en este proyecto                      | Antes de implementar |
@@ -29,6 +29,7 @@
 | `docs/verification.md`       | Cómo verificar que tu trabajo funciona (incluye trazabilidad requirements)  | Antes de declarar una tarea como `done` |
 | `CHECKPOINTS.md`             | Criterios objetivos de "estado final correcto"                              | Para auto-evaluarte |
 | `.claude/agents/`            | Definiciones de subagentes (`leader`, `spec_author`, `implementer`, `reviewer`) | Si orquestas trabajo |
+| `.claude/skills/`            | Procedimientos reutilizables (`sesion-preguntas`: dudas del humano sobre el código; `pausar-sesion`: pausar y retomar una feature a medias) | Cuando el humano los invoque o el caso encaje |
 | `src/`                       | Código de la aplicación                                                     | Para implementar |
 | `tests/`                     | Tests automáticos                                                           | Para verificar |
 
@@ -65,13 +66,37 @@ pending → [spec_author] → spec_ready → ⏸ HUMANO → in_progress → [imp
 
 ## 5. Cierre de sesión (lifecycle)
 
+Si hay que parar con la feature a medias, no apliques este cierre: usa la skill
+`pausar-sesion`, que guarda el estado y el siguiente paso sin vaciar `progress/current.md`.
+
 Antes de terminar:
 
 1. Ejecuta `./init.sh` — todo verde.
 2. Si la tarea está acabada: marca `status: "done"` en `feature_list.json`.
 3. Mueve el resumen de `progress/current.md` al final de `progress/history.md`.
-4. Vacía `progress/current.md` dejando solo la plantilla.
+4. Vacía `progress/current.md` dejando solo la plantilla, **pero conserva intacta la
+   sección "Notas para features futuras"** (ver §5 bis).
 5. No dejes archivos temporales, ni `print()` de debug, ni TODOs sin contexto.
+
+## 5 bis. Notas para features futuras
+
+Todo lo que surja en una sesión y corresponda a **otra** feature (recomendaciones del reviewer,
+decisiones aplazadas, deuda de tooling) va a la sección "Notas para features futuras" de
+`progress/current.md`. Esa sección **sobrevive al cierre de sesión**.
+
+- **Formato:** un subapartado `### <id> <name>` por feature destino (o "Sin feature asignada",
+  al final), **ordenados por id**, con una viñeta por nota que indique el **origen** (archivo y
+  punto, p. ej. r1 de `progress/review_<feature>.md`). Una nota que afecta a varias features se
+  escribe una sola vez, en la de menor id, indicando a qué otras afecta; cada una de las demás
+  lleva una viñeta "ver la nota de la feature <id>".
+- **Quién escribe:** el leader, al recibir cada informe del implementer o del reviewer, y
+  cuando una conversación con el humano deje algo para más adelante. No se dejan notas para
+  features futuras solo en los informes de `progress/`.
+- **Quién lee:** al empezar una feature, el leader pasa sus notas al `spec_author` (o al
+  `implementer` si es `"sdd": false`), que las cubre o las descarta con justificación en el
+  spec o en su informe.
+- **Cuándo se borran:** cuando la feature destino queda `done` con la nota recogida, o cuando el
+  humano la descarta. Se deja constancia en la entrada de `progress/history.md`.
 
 ## 6. Si te bloqueas
 

@@ -72,6 +72,29 @@ menos del 85%. CI falla por debajo de ese umbral.
 make test-unit        # incluye el chequeo de cobertura
 ```
 
+### Compatibilidad con Python 3.9 en local (recomendado)
+
+La CI ejecuta lint y tests con Python 3.9 y 3.14. Para reproducir la rama 3.9 en local
+sin tocar el `.venv` habitual, crea un segundo entorno con `PYTHON` y `VENV` (`.gitignore`
+ya ignora `.venv*/`):
+
+```bash
+uv python install 3.9                                   # una vez; descarga un 3.9 precompilado
+make install PYTHON="$(uv python find 3.9)" VENV=.venv-py39
+make lint test VENV=.venv-py39
+```
+
+Alternativa con Docker (requiere activar la integración de Docker Desktop con la distro de
+WSL; la imagen `slim` no trae `make`):
+
+```bash
+docker run --rm -v "$PWD":/app -w /app python:3.9-slim \
+  sh -c "pip install -q -e '.[dev]' && python -m pytest tests -q"
+```
+
+Si no hay ningún 3.9 disponible, el informe de la feature lo dice explícitamente y la
+verificación queda delegada a la matriz de la CI.
+
 ## Anti-patrones (no hacer)
 
 - ❌ "He añadido el endpoint, debería funcionar." → falta test ejecutable.

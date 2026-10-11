@@ -55,7 +55,7 @@
         "`tests/unit/test_config.py` cubre precedencia, validación fallida y enmascarado de secretos"
       ],
       "sdd": false,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 4,

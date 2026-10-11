@@ -5,7 +5,9 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
+import os
 import unittest
+from unittest import mock
 
 import geoagent
 from geoagent.agent import cli as agent_cli
@@ -37,6 +39,13 @@ class TestPackageLayout(unittest.TestCase):
 
 
 class TestEntryPoints(unittest.TestCase):
+    def setUp(self) -> None:
+        # Python 3.13+ argparse colors its output when FORCE_COLOR is set, even on
+        # a StringIO; PYTHON_COLORS=0 takes precedence and keeps assertions stable.
+        patcher = mock.patch.dict(os.environ, {"PYTHON_COLORS": "0"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_main_without_arguments_returns_zero_and_prints_usage_to_stderr(self) -> None:
         for prog, module in ENTRY_POINTS:
             with self.subTest(prog=prog):

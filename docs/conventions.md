@@ -52,9 +52,20 @@ from geoagent.common.models import Job
 - **Código (`src/`, `tests/`): inglés.** Nombres de variables, funciones y
   clases, comentarios, docstrings y cualquier cadena que se imprima en un
   error, un log o un test.
-- **Todo lo demás: español.** La conversación con el humano, los specs
+- **Todo lo demás, salvo lo del punto siguiente: español.** La conversación con el humano, los specs
   (`specs/`), los informes y la bitácora (`progress/`), y la documentación
   (`docs/`, `README.md`, `AGENTS.md`).
+- **Lo que se lee en GitHub sin abrir el código: inglés** (desde el
+  2026-10-11). Mensajes de commit, título y descripción de los PR (también
+  los borradores en `progress/pr_<feature>.md`, cuyo encabezado sí va en
+  español), issues y comentarios de revisión. El criterio: todo lo que
+  pueda leer otra persona (p. ej. alguien que revisa el repo) va en inglés;
+  lo que es de uso interno del flujo de trabajo, en español.
+- **Pendiente de decidir:** qué hacer con los archivos que hoy están en
+  español y también son visibles en el repo (`README.md`, `docs/`,
+  `specs/`, `progress/`, `AGENTS.md`). Hasta entonces siguen la regla
+  anterior. Los commits y PR anteriores al 2026-10-11 están en español y no
+  se reescriben; más adelante se valorará homogeneizar el proyecto.
 - Los identificadores de código citados dentro de un texto en español se
   dejan tal cual, en inglés y entre backticks (p. ej. `_check_payload`).
 
